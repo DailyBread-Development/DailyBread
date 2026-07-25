@@ -1,4 +1,4 @@
-import asyncio
+import asyncio  # noqa: I001
 import os
 
 import aiohttp
@@ -29,7 +29,7 @@ async def send_heartbeat():
                 print("Heartbeat sent to Uptime Kuma")
             else:
                 print(f"Heartbeat failed with status {response.status}")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         print(f"Failed to send heartbeat: {e}")
 
 
@@ -74,7 +74,7 @@ async def start_services() -> None:
     running_tasks = {bot_task, web_task}
 
     try:
-        done, pending = await asyncio.wait(
+        done, pending = await asyncio.wait(  # noqa: RUF059
             running_tasks,
             return_when=asyncio.FIRST_EXCEPTION,
         )

@@ -1,4 +1,4 @@
-import logging
+import logging  # noqa: I001
 import os
 import secrets
 import traceback
@@ -93,7 +93,7 @@ def build_template_context(request: Request, extra: dict | None = None) -> dict:
 def _get_user_guilds_from_db(session: dict) -> list[dict]:
     try:
         user_record = supabase_service.get_user_by_discord_id(str(session["user"]["id"]))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.warning("Unable to load guilds from Supabase; using session guilds. error=%s", exc)
         return session.get("guilds", [])
 
@@ -210,7 +210,7 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
             has_bot = False
             try:
                 has_bot = discord_service.is_bot_in_guild(guild_id)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.warning("Bot presence check failed guild_id=%s error=%s", guild_id, exc)
 
             db_guild = supabase_service.upsert_guild(

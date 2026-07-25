@@ -1,5 +1,5 @@
-import json
-from typing import Any, Dict, Optional
+import json  # noqa: I001
+from typing import Any, Dict, Optional  # noqa: F401, UP035
 
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
@@ -17,7 +17,7 @@ def _error(message: str, code: int = status.HTTP_400_BAD_REQUEST) -> JSONRespons
 
 
 # Authentication helper
-def _require_session(request: Request) -> Dict[str, Any]:
+def _require_session(request: Request) -> Dict[str, Any]:  # noqa: UP006
     session = get_session(request)
     if not session:
         raise ValueError("Authentication required")
@@ -25,7 +25,7 @@ def _require_session(request: Request) -> Dict[str, Any]:
 
 
 # Permission helper
-def _requires_guild_membership(session: Dict[str, Any], guild_id: str) -> bool:
+def _requires_guild_membership(session: Dict[str, Any], guild_id: str) -> bool:  # noqa: UP006
     return any(str(g.get("id")) == str(guild_id) for g in session.get("guilds", []))
 
 

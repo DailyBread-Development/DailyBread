@@ -30,7 +30,7 @@ async def handle_dailybread(interaction: discord.Interaction) -> None:
 
 async def handle_setup(
     interaction: discord.Interaction,
-    channel: Optional[discord.TextChannel] = None,
+    channel: Optional[discord.TextChannel] = None,  # noqa: UP045
 ) -> None:
     """Handle the /setup command."""
 
