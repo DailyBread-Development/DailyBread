@@ -1,6 +1,2 @@
-# DailyBread
 
 Dailybread is a website and Discord intergration that sends embeds or containers into Discord channels having features that include, a Bible Verse search with translations NLT/NIV/NKJV. And easy navigation webpage.
-
-
- 
