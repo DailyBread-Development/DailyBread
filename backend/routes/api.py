@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
@@ -18,18 +18,18 @@ def _error(message: str, code: int = status.HTTP_400_BAD_REQUEST) -> JSONRespons
 
 
 # Session and Guild Helpers
-def _get_session(request: Request) -> Optional[Dict[str, Any]]:
+def _get_session(request: Request) -> dict[str, Any] | None:
     session = get_session(request)
     return session if session else None
 
 
 # Guild Searcher - finds the guild in the session by ID
-def _find_guild(session: Dict[str, Any], guild_id: str) -> Optional[Dict[str, Any]]:
+def _find_guild(session: dict[str, Any], guild_id: str) -> dict[str, Any] | None:
     return next((g for g in session.get("guilds", []) if str(g.get("guild_id")) == str(guild_id)), None)
 
 
 # Permission Checker - checks if the user has admin or manage_webhooks permissions for the guild
-def _require_session(request: Request) -> Dict[str, Any]:
+def _require_session(request: Request) -> dict[str, Any]:
     session = _get_session(request)
     if not session:
         raise ValueError("Authentication required")
@@ -37,13 +37,13 @@ def _require_session(request: Request) -> Dict[str, Any]:
 
 
 # Guild Permission Checker
-def _has_guild_permission(guild: Dict[str, Any]) -> bool:
+def _has_guild_permission(guild: dict[str, Any]) -> bool:
     # Guild must be admin or owner (already filtered during OAuth sync)
     return guild.get("is_admin", False) or guild.get("is_owner", False)
 
 
 # Color Normalizer - converts hex string or integer to integer color value
-def _normalize_color(color: Any) -> Optional[int]:
+def _normalize_color(color: Any) -> int | None:
     if color is None:
         return None
     if isinstance(color, int):
@@ -60,7 +60,7 @@ def _normalize_color(color: Any) -> Optional[int]:
 
 
 # Embed Payload Builder - constructs the Discord embed payload from the input data
-def _embed_payload(embed: Dict[str, Any]) -> Dict[str, Any]:
+def _embed_payload(embed: dict[str, Any]) -> dict[str, Any]:
     payload = {
         "embeds": [
             {
@@ -94,7 +94,7 @@ def _embed_payload(embed: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # Sync User and Guilds - ensures the user and their guilds are upserted in the database, and returns the normalized guild data for API responses
-def _sync_user_and_guilds(session: Dict[str, Any]) -> Dict[str, Any]:
+def _sync_user_and_guilds(session: dict[str, Any]) -> dict[str, Any]:
     user_profile = session["user"]
     user_record = supabase_service.upsert_user_by_discord_id(
         discord_id=str(user_profile["id"]),

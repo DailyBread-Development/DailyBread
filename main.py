@@ -1,25 +1,26 @@
-import asyncio  # noqa: I001
+import asyncio  # noqa: I001, RUF100
 import os
 
 import aiohttp
 import uvicorn
 from discord.ext import tasks
 
+from backend.main import app as web_app
 from bot.bot import create_bot
 from bot.utils.config import (
     configure_logging,
     get_discord_token,
     load_environment_variables,
 )
-from backend.main import app as web_app
 
-# Globals initialized after loading environment variables
+# Globals defined as mutable container or Type Hints only
 PUSH_URL: str | None = None
 http_session: aiohttp.ClientSession | None = None
 
 
 @tasks.loop(seconds=60)
 async def send_heartbeat():
+    # These read from global scope perfectly without 'global' keyword
     if not PUSH_URL or http_session is None:
         return
 
@@ -38,14 +39,15 @@ def _get_port() -> int:
 
 
 async def start_services() -> None:
+    # 1. Tell Python we are ASSIGNING values to these global variables
     global PUSH_URL, http_session
 
-    # Load configuration first
+    # 2. Load configuration FIRST before checking os.getenv
     load_environment_variables()
     configure_logging()
 
-    PUSH_URL = os.getenv("push_url")  # Use your actual env var name
-
+    # 3. Safely read env variables now that they are loaded
+    PUSH_URL = os.getenv("push_url")
     http_session = aiohttp.ClientSession()
 
     if PUSH_URL:
@@ -100,6 +102,7 @@ async def start_services() -> None:
         if not bot.is_closed():
             await bot.close()
 
+        # This will now successfully close the global session
         if http_session is not None:
             await http_session.close()
 
