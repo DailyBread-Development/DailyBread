@@ -267,7 +267,8 @@ const loadSavedContainers = async () => {
       const resendButton = createElement("button", { class: "rounded-2xl border border-bread-border bg-bread-background px-3 py-2 text-xs font-semibold text-bread-ink transition hover:bg-bread-hover" }, "Resend");
       resendButton.addEventListener("click", async () => {
         if (!container.id) return;
-        const response = await fetch(`/api/containers/${container.id}/send`, { method: "POST" });
+        const channelId = document.getElementById("select-channel")?.value || "";
+        const response = await fetch(`/api/containers/${container.id}/send`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel_id: channelId }) });
         const result = await response.json();
         if (!result.success) {
           showAlert(result.error || "Send failed.", "error");
@@ -321,7 +322,8 @@ const sendContainer = async () => {
   }
 
   try {
-    const response = await fetch(`/api/containers/${containerId}/send`, { method: "POST" });
+    const channelId = document.getElementById("select-channel")?.value || "";
+    const response = await fetch(`/api/containers/${containerId}/send`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel_id: channelId }) });
     const data = await response.json();
     if (!data.success) {
       throw new Error(data.error || "Unable to send container.");

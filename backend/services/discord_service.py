@@ -21,7 +21,7 @@ def _headers() -> Dict[str, str]:
 
 
 # Internal helper to require a valid session for routes that need authentication. Raises ValueError if not authenticated.
-def _request(method: str, path: str, json: Any = None) -> Dict[str, Any]:
+def _request(method: str, path: str, json: Any = None) -> Any:
     url = f"{DISCORD_API_BASE}{path}"
     response = requests.request(method, url, json=json, headers=_headers(), timeout=10)
     try:
@@ -38,6 +38,7 @@ def get_bot_user() -> Dict[str, Any]:
     global _cached_bot_user
     if _cached_bot_user is None:
         _cached_bot_user = _request("GET", "/users/@me")
+    assert _cached_bot_user is not None
     return _cached_bot_user
 
 

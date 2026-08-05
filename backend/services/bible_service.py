@@ -56,11 +56,16 @@ def _api_headers() -> Dict[str, str]:
 
 
 def _normalize_passage(
-    data: Dict[str, Any],
+    data: Optional[Dict[str, Any]],
     fallback_reference: str,
     fallback_translation: Optional[str] = None,
-) -> Dict[str, Optional[str]]:
-    passage = data.get("data") if isinstance(data.get("data"), dict) else data
+) -> Dict[str, Any]:
+    payload = data if isinstance(data, dict) else {}
+    passage = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+
+    if not isinstance(passage, dict):
+        raise ValueError("Invalid api.bible response; passage payload is missing.")
+
     text = str(passage.get("content") or "").strip()
     actual_reference = passage.get("reference") or fallback_reference
     translation = passage.get("bibleId") or fallback_translation or _get_api_config()["bible_id"]

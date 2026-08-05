@@ -196,6 +196,9 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
             avatar=user.get("avatar"),
             global_name=user_data.get("global_name", ""),
         )
+        # A website login is the only event that updates Supabase. The bot
+        # never performs background database synchronization.
+        supabase_service.store_oauth_session(user_record["id"], token_data)
         synced_guilds = []
         for guild in guilds_data:
             guild_id = str(guild.get("id", ""))
@@ -213,27 +216,32 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Bot presence check failed guild_id=%s error=%s", guild_id, exc)
 
+            # Only the logged-in user's manageable guilds are written.
             db_guild = supabase_service.upsert_guild(
-                guild_id=guild_id,
-                name=guild.get("name", ""),
-                icon=guild.get("icon"),
-                owner_id=guild.get("owner_id"),
-                permissions=permissions,
-                has_bot=has_bot,
+                guild_id,
+                guild.get("name", ""),
+                guild.get("icon"),
+                str(user_data["id"]) if is_owner else None,
+                has_bot,
             )
-            supabase_service.ensure_user_guild(
-                user_id=user_record["id"],
-                guild_id=guild_id,
-                permissions=permissions,
-                is_owner=is_owner,
-                is_admin=is_admin,
+            supabase_service.upsert_guild_member(
+                db_guild["id"], user_record["id"], is_owner, is_admin
             )
+            if has_bot:
+                try:
+                    channels = discord_service.list_guild_channels(guild_id)
+                    supabase_service.upsert_channels(guild_id, [
+                        {"discord_id": str(channel["id"]), "name": channel.get("name"), "channel_type": channel.get("type", 0), "position": channel.get("position", 0), "category_id": channel.get("parent_id"), "nsfw": channel.get("nsfw", False)}
+                        for channel in channels
+                    ])
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Guild channel sync failed guild_id=%s error=%s", guild_id, exc)
             synced_guilds.append(
                 {
-                    "guild_id": db_guild["guild_id"],
-                    "name": db_guild.get("name"),
+                    "guild_id": guild_id,
+                    "name": db_guild["name"],
                     "icon": db_guild.get("icon"),
-                    "icon_url": build_guild_icon_url(db_guild) if db_guild.get("icon") else None,
+                    "icon_url": build_guild_icon_url(guild),
                     "has_bot": has_bot,
                     "is_owner": is_owner,
                     "is_admin": is_admin,

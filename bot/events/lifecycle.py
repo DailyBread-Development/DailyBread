@@ -7,7 +7,6 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot.utils.errors import DailyBreadPermissionError
-from bot.utils.guilds import cleanup_channel, cleanup_guild, sync_guild
 
 
 LOGGER = logging.getLogger("dailybread.bot")
@@ -26,18 +25,13 @@ def register_lifecycle_events(bot: commands.Bot) -> None:
             bot.dailybread_commands_synced = True
             LOGGER.info("Synced Discord application commands count=%s", len(synced_commands))
 
-        for guild in guilds:
-            await sync_guild(guild)
-
     @bot.event
     async def on_guild_join(guild: discord.Guild) -> None:
         LOGGER.info("Joined guild guild_id=%s name=%s", guild.id, guild.name)
-        await sync_guild(guild)
 
     @bot.event
     async def on_guild_remove(guild: discord.Guild) -> None:
         LOGGER.info("Removed from guild guild_id=%s name=%s", guild.id, guild.name)
-        await cleanup_guild(guild)
 
     @bot.event
     async def on_guild_channel_delete(channel: discord.abc.GuildChannel) -> None:
@@ -47,7 +41,6 @@ def register_lifecycle_events(bot: commands.Bot) -> None:
             channel.id,
             channel.name,
         )
-        await cleanup_channel(channel)
 
     async def on_app_command_error(
         interaction: discord.Interaction,

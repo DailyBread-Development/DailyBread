@@ -36,6 +36,13 @@ def build_payload_from_embed(embed: Dict[str, Any], bible_data: Optional[Dict[st
     if footer_text:
         embed_payload["footer"] = {"text": footer_text}
 
+    if embed.get("image_url"):
+        embed_payload["image"] = {"url": embed["image_url"]}
+    if embed.get("thumbnail_url"):
+        embed_payload["thumbnail"] = {"url": embed["thumbnail_url"]}
+    if embed.get("author"):
+        embed_payload["author"] = {"name": embed["author"]}
+
     image_url = embed.get("image_url")
     if image_url:
         embed_payload["image"] = {"url": image_url}

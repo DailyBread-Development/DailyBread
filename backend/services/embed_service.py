@@ -1,7 +1,6 @@
-import os
 from typing import Any, Dict, List, Optional
 
-from backend.services import bible_service, supabase_service
+from backend.services import supabase_service
 from backend.services.webhook_sender import build_payload_from_embed, send_webhook
 
 
@@ -10,10 +9,8 @@ def create_embed_for_user(
     user_discord_id: str,
     title: str,
     description: str,
-    verse_reference: Optional[str] = None,
     color: Optional[int] = None,
     footer: Optional[str] = None,
-    message_content: Optional[str] = None,
     image_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     user = supabase_service.upsert_user_by_discord_id(user_discord_id)
@@ -21,11 +18,8 @@ def create_embed_for_user(
         creator_id=user["id"],
         title=title,
         description=description,
-        verse_reference=verse_reference,
-        verse_text=None,
         color=color,
         footer=footer,
-        message_content=message_content,
         image_url=image_url,
     )
     return embed
@@ -68,12 +62,6 @@ async def send_embed(
     if not guild_id and not channel_id and not webhook_id:
         return {"success": False, "error": "guild_id, channel_id, or webhook_id is required to send an embed."}
 
-    bible_data: Optional[Dict[str, Any]] = None
-    if embed.get("verse_reference"):
-        bible_data = bible_service.resolve_verse_reference(embed["verse_reference"])
-        if not bible_data:
-            return {"success": False, "error": "Unable to resolve Bible reference."}
-
     webhooks = []
     if webhook_id:
         webhook = supabase_service.get_webhook_by_id(webhook_id)
@@ -105,20 +93,11 @@ async def send_embed(
     if channel_id and any(str(webhook.get("channel_discord_id")) != str(channel_id) for webhook in webhooks):
         return {"success": False, "error": "Selected webhook does not belong to the requested channel."}
 
-    payload = build_payload_from_embed(embed, bible_data)
+    payload = build_payload_from_embed(embed)
     results: List[Dict[str, Any]] = []
     for webhook in webhooks:
         result = await send_webhook(webhook, payload)
-        supabase_service.log_embed_send(
-            embed_id=embed_id,
-            webhook_discord_id=webhook["discord_id"],
-            guild_discord_id=webhook.get("guild_discord_id"),
-            channel_discord_id=webhook.get("channel_discord_id"),
-            success=result["success"],
-            status_code=result.get("status_code"),
-            response_text=result.get("response_text"),
-            error=result.get("error"),
-        )
+        supabase_service.audit("embed.sent" if result["success"] else "embed.send_failed", guild_uuid=webhook["guild_id"], user_uuid=user_id, metadata={"embed_id": embed_id, "webhook_id": webhook["discord_id"], "status_code": result.get("status_code")})
         results.append(result)
 
     all_success = all(item.get("success") for item in results)

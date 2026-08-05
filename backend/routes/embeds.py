@@ -43,14 +43,12 @@ async def create_embed(request: Request):
 
     title = str(payload.get("title", "")).strip()
     description = str(payload.get("description", "")).strip()
-    verse_reference = payload.get("verse_reference")
     color = payload.get("color")
     footer = payload.get("footer")
-    message_content = str(payload.get("message_content", "")).strip()
     image_url = str(payload.get("image_url", "")).strip()
 
-    if not title and not description and not message_content:
-        return _error("Message content, embed title, or embed description is required.", status.HTTP_400_BAD_REQUEST)
+    if not title and not description:
+        return _error("Embed title or description is required.", status.HTTP_400_BAD_REQUEST)
 
     if color is not None:
         try:
@@ -65,10 +63,8 @@ async def create_embed(request: Request):
         user_discord_id=str(session["user"]["id"]),
         title=title,
         description=description,
-        verse_reference=str(verse_reference).strip() if verse_reference else None,
         color=color,
         footer=str(footer).strip() if footer else None,
-        message_content=message_content or None,
         image_url=image_url or None,
     )
 
