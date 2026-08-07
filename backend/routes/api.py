@@ -198,6 +198,29 @@ async def get_guild_channels(guild_id: str, request: Request):
     return {"success": True, "channels": text_channels}
 
 
+@api_router.get("/guilds/{guild_id}/roles")
+async def get_guild_roles(guild_id: str, request: Request):
+    """Expose bot-visible role names for authenticated embed previews."""
+    try:
+        session = _require_session(request)
+    except ValueError as exc:
+        return _error(str(exc), status.HTTP_401_UNAUTHORIZED)
+
+    guild = _find_guild(session, guild_id)
+    if not guild or not _has_guild_permission(guild):
+        return _error("Insufficient permissions for this guild.", status.HTTP_403_FORBIDDEN)
+
+    try:
+        roles = discord_service.list_guild_roles(guild_id)
+    except RuntimeError as exc:
+        return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
+
+    return {
+        "success": True,
+        "roles": [{"id": str(role["id"]), "name": role.get("name") or "Role"} for role in roles],
+    }
+
+
 # Channel Endpoints - create webhook for channel
 @api_router.post("/guilds/{guild_id}/channels/{channel_id}/webhook")
 async def create_channel_webhook(guild_id: str, channel_id: str, request: Request):
@@ -228,10 +251,10 @@ async def create_channel_webhook(guild_id: str, channel_id: str, request: Reques
     return {
         "success": True,
         "webhook": {
-            "id": webhook_record["discord_id"],
+            "id": webhook_record["discord_webhook_id"],
             "name": webhook_record.get("name"),
-            "channel_id": webhook_record.get("channel_discord_id"),
-            "guild_id": webhook_record.get("guild_discord_id"),
+            "channel_id": webhook_record.get("webhook_id"),
+            "guild_id": webhook_record.get("guild_id"),
         },
     }
 
@@ -255,6 +278,8 @@ async def create_embed(request: Request):
     footer = str(data.get("footer", "")).strip()
     message_content = str(data.get("message_content", "")).strip()
     image_url = str(data.get("image_url", "")).strip()
+    thumbnail_url = str(data.get("thumbnail_url", "")).strip()
+    author = str(data.get("author", "")).strip()
     color_value = data.get("color")
 
     if not title and not description and not message_content:
@@ -287,6 +312,8 @@ async def create_embed(request: Request):
         footer=footer or None,
         color=normalized_color,
         image_url=image_url or None,
+        thumbnail_url=thumbnail_url or None,
+        author=author or None,
     )
 
     return {

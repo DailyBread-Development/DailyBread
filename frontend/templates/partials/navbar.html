@@ -7,19 +7,26 @@
 
     <div class="hidden items-center gap-1 md:flex">
       <a href="/" class="nav-link {{ 'is-active' if active_page == 'home' else '' }}">Home</a>
-      <a href="/login" class="nav-link {{ 'is-active' if active_page == 'login' else '' }}">Login</a>
+      {% if user %}
       <a href="/dashboard" class="nav-link {{ 'is-active' if active_page == 'dashboard' else '' }}">Dashboard</a>
       <a href="/dashboard/builder" class="nav-link {{ 'is-active' if active_page == 'builder' else '' }}">Embed Builder</a>
       <a href="/dashboard/advanced-builder" class="nav-link {{ 'is-active' if active_page == 'advanced_builder' else '' }}">Advanced Builder</a>
+      {% else %}
+      <a href="/login" class="nav-link {{ 'is-active' if active_page == 'login' else '' }}">Login</a>
+      {% endif %}
     </div>
 
     <div class="flex items-center gap-2">
       {% if user %}
-      <a href="/dashboard" class="min-h-11 items-center gap-2 rounded-full border border-black/10 bg-bread-cream px-4 text-sm font-bold text-bread-ink transition hover:border-bread-gold md:inline-flex">
-        <img src="{{ user.avatar_url }}" alt="{{ user.username }} avatar" class="h-8 w-8 rounded-full" />
-        <span>{{ user.username }}</span>
-      </a>
-      <a href="/logout" class="min-h-11 items-center justify-center rounded-full bg-bread-ink px-5 text-sm font-bold text-bread-cream transition hover:bg-black md:inline-flex">Logout</a>
+      <div class="relative hidden md:block" data-user-menu>
+        <button type="button" data-user-menu-toggle class="user-menu-trigger" aria-expanded="false" aria-haspopup="menu" aria-controls="user-menu-dropdown">
+          <img src="{{ user.avatar_url }}" alt="" class="h-8 w-8 rounded-full" />
+          <span>{{ user.username }}</span>
+        </button>
+        <div id="user-menu-dropdown" class="user-menu-dropdown" data-user-menu-dropdown role="menu" aria-label="User menu">
+          <a href="/logout" role="menuitem" class="user-menu-item">Log Out</a>
+        </div>
+      </div>
       {% else %}
       <a href="/login" class="min-h-11 items-center justify-center rounded-full bg-bread-ink px-5 text-sm font-bold text-bread-cream transition hover:bg-black md:inline-flex">Login with Discord</a>
       {% endif %}
@@ -35,13 +42,12 @@
   <div id="mobile-menu" data-mobile-menu class="hidden border-t border-black/5 px-4 pb-4 md:hidden">
     <div class="mx-auto flex max-w-7xl flex-col gap-2 pt-3">
       <a href="/" class="mobile-nav-link {{ 'is-active' if active_page == 'home' else '' }}">Home</a>
-      <a href="/login" class="mobile-nav-link {{ 'is-active' if active_page == 'login' else '' }}">Login</a>
+      {% if user %}
       <a href="/dashboard" class="mobile-nav-link {{ 'is-active' if active_page == 'dashboard' else '' }}">Dashboard</a>
       <a href="/dashboard/builder" class="mobile-nav-link {{ 'is-active' if active_page == 'builder' else '' }}">Embed Builder</a>
       <a href="/dashboard/advanced-builder" class="mobile-nav-link {{ 'is-active' if active_page == 'advanced_builder' else '' }}">Advanced Builder</a>
-      {% if user %}
-      <a href="/logout" class="mt-2 flex min-h-12 items-center justify-center rounded-full bg-bread-ink px-5 text-sm font-bold text-bread-cream ">Logout</a>
       {% else %}
+      <a href="/login" class="mobile-nav-link {{ 'is-active' if active_page == 'login' else '' }}">Login</a>
       <a href="/login" class="mt-2 flex min-h-12 items-center justify-center rounded-full bg-bread-ink px-5 text-sm font-bold text-bread-cream ">Login with Discord</a>
       {% endif %}
     </div>

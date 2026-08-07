@@ -113,6 +113,17 @@
 
             <div class="grid gap-4 sm:grid-cols-2">
               <div>
+                <label class="block text-sm font-semibold text-bread-ink">Author</label>
+                <input id="embed-author" type="text" placeholder="Optional author name" class="mt-3 w-full rounded-2xl border border-black/10 bg-bread-cream px-4 py-4 text-base text-bread-ink outline-none transition focus:border-bread-gold focus:ring-4 focus:ring-bread-gold/15" />
+              </div>
+              <div>
+                <label class="block text-sm font-semibold text-bread-ink">Thumbnail URL</label>
+                <input id="embed-thumbnail-url" type="url" placeholder="https://example.com/thumb.png" class="mt-3 w-full rounded-2xl border border-black/10 bg-bread-cream px-4 py-4 text-base text-bread-ink outline-none transition focus:border-bread-gold focus:ring-4 focus:ring-bread-gold/15" />
+              </div>
+            </div>
+
+            <div class="grid gap-4 sm:grid-cols-2">
+              <div>
                 <label class="block text-sm font-semibold text-bread-ink">Channel</label>
                 <input id="channel-search-input" type="text" placeholder="Search channels..." class="mt-3 w-full rounded-2xl border border-black/10 bg-bread-cream px-4 py-4 text-base text-bread-ink outline-none transition focus:border-bread-gold focus:ring-4 focus:ring-bread-gold/15" />
                 <select id="builder-channel-id" class="mt-3 w-full rounded-2xl border border-black/10 bg-bread-cream px-4 py-4 text-base text-bread-ink outline-none transition focus:border-bread-gold focus:ring-4 focus:ring-bread-gold/15">
@@ -151,14 +162,20 @@
         <h2 class="font-serif text-2xl font-bold text-bread-ink">Live Preview</h2>
         <p class="mt-2 text-sm text-black/65 ">Embed will appear below.</p>
 
-        <div id="embed-preview" class="mt-6 rounded-2xl border border-black/10 bg-white p-5 shadow-sm">
-          <p id="preview-message-content" class="mb-4 hidden text-base leading-7 text-bread-ink "></p>
-          <div id="preview-color-bar" class="h-1 rounded-full bg-bread-gold"></div>
-          <h3 id="preview-title" class="mt-5 text-xl font-semibold text-bread-ink ">DailyBread</h3>
-          <p id="preview-description" class="mt-4 text-base leading-7 text-black/75 ">Start typing to see your devotional embed appear here.</p>
-          <img id="preview-image" src="" alt="" class="mt-5 hidden w-full rounded-xl border border-black/10 object-cover" />
-          <div id="preview-verse" class="mt-5 rounded-2xl border border-black/10 bg-white p-4 text-sm text-black/80  hidden"></div>
-          <p id="preview-footer" class="mt-6 text-sm font-semibold uppercase tracking-[0.15em] text-black/45">DailyBread</p>
+        <div class="discord-preview-shell mt-6">
+          <p id="preview-message-content" class="discord-message hidden"></p>
+          <article id="embed-preview" class="discord-embed">
+            <div id="preview-color-bar" class="discord-color-bar"></div>
+            <div class="discord-embed-content">
+              <div id="preview-author" class="discord-author hidden"></div>
+              <img id="preview-thumbnail" src="" alt="" class="discord-thumbnail hidden" />
+              <h3 id="preview-title" class="discord-title">DailyBread</h3>
+              <p id="preview-description" class="discord-description">Start typing to see your devotional embed appear here.</p>
+              <div id="preview-verse" class="discord-fields hidden"></div>
+              <img id="preview-image" src="" alt="" class="discord-image hidden" />
+              <div class="discord-footer-row"><span id="preview-footer" class="discord-footer">DailyBread</span><time id="preview-timestamp" class="discord-timestamp"></time></div>
+            </div>
+          </article>
         </div>
       </aside>
     </div>
@@ -177,6 +194,8 @@ const state = {
     color: '#D6B36A',
     footer: 'DailyBread',
     image_url: '',
+    thumbnail_url: '',
+    author: '',
     verse_reference: '',
     channel_id: selectedChannelId,
     webhook_id: '',
@@ -200,6 +219,8 @@ const embedDescription = getEl('#embed-description');
 const embedColor = getEl('#embed-color');
 const embedFooter = getEl('#embed-footer');
 const embedImageUrl = getEl('#embed-image-url');
+const embedThumbnailUrl = getEl('#embed-thumbnail-url');
+const embedAuthor = getEl('#embed-author');
 const embedVerseReference = getEl('#embed-verse-reference');
 const presetSelect = getEl('#preset-select');
 const channelSelect = getEl('#builder-channel-id');
@@ -215,8 +236,12 @@ const previewColorBar = getEl('#preview-color-bar');
 const previewVerse = getEl('#preview-verse');
 const previewMessageContent = getEl('#preview-message-content');
 const previewImage = getEl('#preview-image');
+const previewThumbnail = getEl('#preview-thumbnail');
+const previewAuthor = getEl('#preview-author');
+const previewTimestamp = getEl('#preview-timestamp');
 
 let availableChannels = [];
+const roleNames = new Map();
 
 const presets = {
   daily: {
@@ -245,28 +270,74 @@ function setStatus(message, type = 'info') {
 
 function renderPreview() {
   if (state.draft.message_content) {
-    previewMessageContent.textContent = state.draft.message_content;
+    renderDiscordText(previewMessageContent, state.draft.message_content);
     previewMessageContent.classList.remove('hidden');
   } else {
     previewMessageContent.classList.add('hidden');
   }
-  previewTitle.textContent = state.draft.title || 'DailyBread';
-  previewDescription.textContent = state.draft.description || 'Start typing to see your devotional embed appear here.';
+  renderDiscordText(previewTitle, state.draft.title || 'DailyBread');
+  renderDiscordText(previewDescription, state.draft.description || 'Start typing to see your devotional embed appear here.');
   previewFooter.textContent = state.draft.footer || 'DailyBread';
   previewColorBar.style.backgroundColor = state.draft.color || '#D6B36A';
-  if (state.draft.image_url) {
-    previewImage.src = state.draft.image_url;
-    previewImage.alt = state.draft.title ? `${state.draft.title} image` : 'Embed image';
-    previewImage.classList.remove('hidden');
+  previewTimestamp.textContent = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date());
+  if (state.draft.author) {
+    renderDiscordText(previewAuthor, state.draft.author);
+    previewAuthor.classList.remove('hidden');
   } else {
-    previewImage.removeAttribute('src');
-    previewImage.classList.add('hidden');
+    previewAuthor.classList.add('hidden');
   }
+  updatePreviewImage(previewThumbnail, state.draft.thumbnail_url, 'Embed thumbnail');
+  updatePreviewImage(previewImage, state.draft.image_url, state.draft.title ? `${state.draft.title} image` : 'Embed image');
   if (state.verse) {
     previewVerse.classList.remove('hidden');
-    previewVerse.innerHTML = `<span class="text-xs font-bold uppercase tracking-[0.15em] text-bread-sage" >${state.verse.reference}</span><p class="mt-3 leading-7">${state.verse.text}</p><p class="mt-3 text-xs uppercase tracking-[0.15em] text-black/45">${state.verse.translation_label || state.verse.translation || ''}</p>`;
+    previewVerse.replaceChildren();
+    const fieldName = document.createElement('strong');
+    fieldName.textContent = state.verse.reference;
+    const fieldValue = document.createElement('span');
+    renderDiscordText(fieldValue, state.verse.text);
+    previewVerse.append(fieldName, fieldValue);
   } else {
     previewVerse.classList.add('hidden');
+  }
+}
+
+function updatePreviewImage(image, url, alt) {
+  if (url) {
+    image.src = url;
+    image.alt = alt;
+    image.classList.remove('hidden');
+  } else {
+    image.removeAttribute('src');
+    image.classList.add('hidden');
+  }
+}
+
+function renderDiscordText(element, value) {
+  const fragment = document.createDocumentFragment();
+  const pattern = /<@&(\d+)>|<@(\d+)>|<#(\d+)>|@(everyone|here)/g;
+  let lastIndex = 0;
+  let match;
+  while ((match = pattern.exec(value)) !== null) {
+    fragment.append(document.createTextNode(value.slice(lastIndex, match.index)));
+    const mention = document.createElement('span');
+    mention.className = match[1] ? 'discord-mention discord-role-mention' : 'discord-mention';
+    mention.textContent = match[1] ? `@${roleNames.get(match[1]) || 'Role'}` : match[2] ? '@User' : match[3] ? '#channel' : `@${match[4]}`;
+    fragment.append(mention);
+    lastIndex = pattern.lastIndex;
+  }
+  fragment.append(document.createTextNode(value.slice(lastIndex)));
+  element.replaceChildren(fragment);
+}
+
+async function loadRoles() {
+  try {
+    const response = await fetch(`/api/guilds/${guildId}/roles`);
+    const data = await response.json();
+    if (!response.ok || !data.success) return;
+    data.roles.forEach((role) => roleNames.set(String(role.id), role.name));
+    renderPreview();
+  } catch (error) {
+    console.warn('Role mention preview could not be loaded.', error);
   }
 }
 
@@ -277,6 +348,8 @@ function updateDraft() {
   state.draft.color = embedColor.value;
   state.draft.footer = embedFooter.value;
   state.draft.image_url = embedImageUrl.value.trim();
+  state.draft.thumbnail_url = embedThumbnailUrl.value.trim();
+  state.draft.author = embedAuthor.value.trim();
   state.draft.verse_reference = embedVerseReference.value;
   state.draft.channel_id = channelSelect.value;
   state.draft.webhook_id = webhookSelect.value;
@@ -399,6 +472,8 @@ async function saveEmbed() {
     color: parseInt(state.draft.color.replace('#', ''), 16),
     footer: state.draft.footer,
     image_url: state.draft.image_url || '',
+    thumbnail_url: state.draft.thumbnail_url || '',
+    author: state.draft.author || '',
     message_content: state.draft.message_content || '',
   };
 
@@ -463,7 +538,7 @@ async function sendEmbed() {
 verseSearchButton.addEventListener('click', searchVerse);
 verseSearchInput.addEventListener('keydown', (e) => e.key === 'Enter' && searchVerse());
 useVerseButton.addEventListener('click', useVerse);
-[presetSelect, messageContent, embedTitle, embedDescription, embedColor, embedFooter, embedImageUrl].forEach((el) => el.addEventListener('input', updateDraft));
+[presetSelect, messageContent, embedTitle, embedDescription, embedColor, embedFooter, embedImageUrl, embedThumbnailUrl, embedAuthor].forEach((el) => el.addEventListener('input', updateDraft));
 [channelSelect, webhookSelect].forEach((el) => el.addEventListener('change', updateDraft));
 presetSelect.addEventListener('change', (e) => applyPreset(e.target.value));
 channelSearchInput?.addEventListener('input', () => renderChannelOptions(availableChannels));
@@ -471,6 +546,7 @@ sendButton.addEventListener('click', sendEmbed);
 
 loadChannels();
 loadWebhooks();
+loadRoles();
 renderPreview();
 </script>
 {% endblock %}

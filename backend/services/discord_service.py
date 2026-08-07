@@ -60,6 +60,11 @@ def list_guild_channels(guild_id: str) -> List[Dict[str, Any]]:
     return _request("GET", f"/guilds/{guild_id}/channels")
 
 
+def list_guild_roles(guild_id: str) -> List[Dict[str, Any]]:
+    """Return roles visible to the DailyBread bot for Discord mention previews."""
+    return _request("GET", f"/guilds/{guild_id}/roles")
+
+
 # Creates a webhook in the specified channel with the given name, and returns the webhook information including the ID and token needed to send messages through it.
 def create_webhook(channel_id: str, name: str = "DailyBread") -> Dict[str, Any]:
     payload = {"name": name}
