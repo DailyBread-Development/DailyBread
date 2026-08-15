@@ -10,7 +10,6 @@
       {% if user %}
       <a href="/dashboard" class="nav-link {{ 'is-active' if active_page == 'dashboard' else '' }}">Dashboard</a>
       <a href="/dashboard/builder" class="nav-link {{ 'is-active' if active_page == 'builder' else '' }}">Embed Builder</a>
-      <a href="/dashboard/advanced-builder" class="nav-link {{ 'is-active' if active_page == 'advanced_builder' else '' }}">Advanced Builder</a>
       {% else %}
       <a href="/login" class="nav-link {{ 'is-active' if active_page == 'login' else '' }}">Login</a>
       {% endif %}
@@ -20,7 +19,7 @@
       {% if user %}
       <div class="relative hidden md:block" data-user-menu>
         <button type="button" data-user-menu-toggle class="user-menu-trigger" aria-expanded="false" aria-haspopup="menu" aria-controls="user-menu-dropdown">
-          <img src="{{ user.avatar_url }}" alt="" class="h-8 w-8 rounded-full" />
+          <img src="{{ user.avatar_url or url_for('static', path='images/DailyBread.svg') }}" alt="{{ user.username }} avatar" class="h-8 w-8 rounded-full object-cover" />
           <span>{{ user.username }}</span>
         </button>
         <div id="user-menu-dropdown" class="user-menu-dropdown" data-user-menu-dropdown role="menu" aria-label="User menu">
@@ -45,7 +44,6 @@
       {% if user %}
       <a href="/dashboard" class="mobile-nav-link {{ 'is-active' if active_page == 'dashboard' else '' }}">Dashboard</a>
       <a href="/dashboard/builder" class="mobile-nav-link {{ 'is-active' if active_page == 'builder' else '' }}">Embed Builder</a>
-      <a href="/dashboard/advanced-builder" class="mobile-nav-link {{ 'is-active' if active_page == 'advanced_builder' else '' }}">Advanced Builder</a>
       {% else %}
       <a href="/login" class="mobile-nav-link {{ 'is-active' if active_page == 'login' else '' }}">Login</a>
       <a href="/login" class="mt-2 flex min-h-12 items-center justify-center rounded-full bg-bread-ink px-5 text-sm font-bold text-bread-cream ">Login with Discord</a>

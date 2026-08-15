@@ -360,24 +360,9 @@ async def builder_page(request: Request) -> HTMLResponse:
     )
 
 
-@app.get("/dashboard/advanced-builder", response_class=HTMLResponse)
-async def advanced_builder_page(request: Request) -> HTMLResponse:
-    session = get_session(request)
-    if not session:
-        return RedirectResponse(url="/login")
-
-    guilds = _get_user_guilds_from_db(session)
-    advanced_guilds = [guild for guild in guilds if guild.get("has_bot")]
-    return templates.TemplateResponse(
-        request,
-        "pages/advanced-builder.html",
-        build_template_context(request, {
-            "page_title": "Advanced Builder - DailyBread",
-            "active_page": "advanced_builder",
-            "user": session["user"],
-            "guilds": advanced_guilds,
-        }),
-    )
+@app.get("/dashboard/advanced-builder")
+async def advanced_builder_page(request: Request) -> RedirectResponse:
+    return RedirectResponse(url="/dashboard/builder")
 
 
 # Logout

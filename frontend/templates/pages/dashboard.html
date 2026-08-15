@@ -13,7 +13,7 @@
             <p class="mt-4 max-w-2xl text-sm leading-6 text-black/65"" >Select a server to manage Bible verse delivery, set up channels, and create webhooks for DailyBread.</p>
           </div>
           <div class="flex flex-col items-center gap-3 rounded-full bg-bread-linen/80 px-5 py-4 ">
-            <img src="{{ user.avatar_url }}" alt="{{ user.username }} avatar" class="h-16 w-16 rounded-full border-2 border-bread-gold/50" />
+            <img src="{{ user.avatar_url or url_for('static', path='images/DailyBread.svg') }}" alt="{{ user.username }} avatar" class="h-16 w-16 rounded-full border-2 border-bread-gold/50 object-cover" />
             <div class="text-center">
               <p class="text-xs uppercase tracking-[0.15em] text-black/50">Connected as</p>
               <p class="font-semibold text-bread-ink ">{{ user.username }}</p>

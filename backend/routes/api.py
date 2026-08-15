@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 
 from backend.auth import build_guild_icon_url, get_session
 from backend.services import bible_service, discord_service, supabase_service
+from backend.services.container_service import normalize_container_payload
 from backend.services.webhook_sender import send_webhook
 
 api_router = APIRouter()
@@ -62,22 +63,7 @@ def _normalize_color(color: Any) -> int | None:
 
 def _validate_container_payload(payload: Any) -> dict[str, Any]:
     """Validate the safe Components V2 subset accepted by DailyBread."""
-    if not isinstance(payload, dict) or payload.get("flags") != 32768 or not isinstance(payload.get("components"), list):
-        raise ValueError("A Components V2 payload with components is required.")
-    def validate(component: Any) -> None:
-        if not isinstance(component, dict) or component.get("type") not in {10, 12, 14, 17}:
-            raise ValueError("Unsupported container component.")
-        if component["type"] == 10 and not str(component.get("content", "")).strip():
-            raise ValueError("TextDisplay components require content.")
-        if component["type"] == 17:
-            children = component.get("components")
-            if not isinstance(children, list) or not children:
-                raise ValueError("Container components require children.")
-            for child in children:
-                validate(child)
-    for component in payload["components"]:
-        validate(component)
-    return payload
+    return normalize_container_payload(payload)
 
 
 # Embed Payload Builder - constructs the Discord embed payload from the input data
@@ -243,7 +229,10 @@ async def create_channel_webhook(guild_id: str, channel_id: str, request: Reques
         )
 
     try:
-        webhook = discord_service.create_webhook(channel_id)
+        channel_name_row = supabase_service.get_channel_by_discord_id(channel_id)
+        channel_label = (channel_name_row.get("name") if channel_name_row else None) or "dailybread"
+        webhook_name = str(channel_label).strip().lstrip("#").replace(" ", "-").lower()
+        webhook = discord_service.create_webhook(channel_id, webhook_name or "dailybread")
     except RuntimeError as exc:
         return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
 
