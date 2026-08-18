@@ -53,6 +53,7 @@ create table public.webhooks (
 create table public.embeds (
   id uuid primary key default gen_random_uuid(), creator_id uuid not null references public.users(id) on delete cascade,
   title text, description text, color integer, footer text, image_url text, thumbnail_url text, author text, timestamp timestamptz,
+  message_content text, verse_reference text,
   created_at timestamptz not null default timezone('utc', now()), updated_at timestamptz not null default timezone('utc', now())
 );
 create table public.guild_embeds (guild_id uuid not null references public.guilds(id) on delete cascade, embed_id uuid not null references public.embeds(id) on delete cascade, primary key (guild_id, embed_id));

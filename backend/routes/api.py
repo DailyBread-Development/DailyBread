@@ -303,6 +303,8 @@ async def create_embed(request: Request):
         image_url=image_url or None,
         thumbnail_url=thumbnail_url or None,
         author=author or None,
+        message_content=message_content or None,
+        verse_reference=verse_reference or None,
     )
 
     return {

@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional
 
-from backend.services import supabase_service
+from backend.services import supabase_service, bible_service
 from backend.services.webhook_sender import build_payload_from_embed, send_webhook
 
 
@@ -93,7 +93,14 @@ async def send_embed(
     if channel_id and any(str(webhook.get("channel_discord_id")) != str(channel_id) for webhook in webhooks):
         return {"success": False, "error": "Selected webhook does not belong to the requested channel."}
 
-    payload = build_payload_from_embed(embed)
+    bible_data = None
+    if embed.get("verse_reference"):
+        try:
+            bible_data = bible_service.resolve_verse_reference(str(embed.get("verse_reference")))
+        except Exception:
+            bible_data = None
+
+    payload = build_payload_from_embed(embed, bible_data)
     results: List[Dict[str, Any]] = []
     for webhook in webhooks:
         result = await send_webhook(webhook, payload)

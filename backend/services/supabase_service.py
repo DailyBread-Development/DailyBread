@@ -121,8 +121,31 @@ def replace_member_roles(guild_member_id: str, role_ids: list[str]) -> None:
         _execute(supabase.table("member_roles").insert([{"guild_member_id": guild_member_id, "role_id": role_id} for role_id in role_ids]))
 
 
-def create_embed(creator_id: str, title: str, description: str, color: int | None = None, footer: str | None = None, image_url: str | None = None, thumbnail_url: str | None = None, author: str | None = None) -> dict[str, Any]:
-    rows = _execute(supabase.table("embeds").insert({"creator_id": creator_id, "title": title or None, "description": description or None, "color": color, "footer": footer, "image_url": image_url, "thumbnail_url": thumbnail_url, "author": author}).select("*"))
+def create_embed(
+    creator_id: str,
+    title: str,
+    description: str,
+    color: int | None = None,
+    footer: str | None = None,
+    image_url: str | None = None,
+    thumbnail_url: str | None = None,
+    author: str | None = None,
+    message_content: str | None = None,
+    verse_reference: str | None = None,
+) -> dict[str, Any]:
+    record = {
+        "creator_id": creator_id,
+        "title": title or None,
+        "description": description or None,
+        "color": color,
+        "footer": footer,
+        "image_url": image_url,
+        "thumbnail_url": thumbnail_url,
+        "author": author,
+        "message_content": message_content,
+        "verse_reference": verse_reference,
+    }
+    rows = _execute(supabase.table("embeds").insert(record).select("*"))
     return rows[0]
 
 
