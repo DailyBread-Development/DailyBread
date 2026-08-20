@@ -203,8 +203,48 @@ async def get_guild_roles(guild_id: str, request: Request):
 
     return {
         "success": True,
-        "roles": [{"id": str(role["id"]), "name": role.get("name") or "Role"} for role in roles],
+        "roles": [{"id": str(role["id"]), "name": role.get("name") or "Role", "color": role.get("color", 0)} for role in roles],
     }
+
+
+def _mention_guild(request: Request, guild_id: str) -> tuple[dict[str, Any] | None, JSONResponse | None]:
+    try:
+        session = _require_session(request)
+    except ValueError as exc:
+        return None, _error(str(exc), status.HTTP_401_UNAUTHORIZED)
+    guild = _find_guild(session, guild_id)
+    if not guild:
+        return None, _error("Guild not found in your Discord session.", status.HTTP_403_FORBIDDEN)
+    if not _has_guild_permission(guild):
+        return None, _error("Insufficient permissions for this guild.", status.HTTP_403_FORBIDDEN)
+    return guild, None
+
+
+@api_router.get("/guilds/{guild_id}/members/search")
+async def search_guild_members(guild_id: str, request: Request, q: str = ""):
+    _, error = _mention_guild(request, guild_id)
+    if error:
+        return error
+    try:
+        members = discord_service.search_guild_members(guild_id, q)
+    except RuntimeError as exc:
+        return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
+    for member in members:
+        avatar = member.pop("avatar", None)
+        member["avatar_url"] = f"https://cdn.discordapp.com/avatars/{member['id']}/{avatar}.png?size=64" if avatar else "/static/images/dailybread-avatar.svg"
+    return {"success": True, "members": members}
+
+
+@api_router.get("/guilds/{guild_id}/roles/search")
+async def search_guild_roles(guild_id: str, request: Request, q: str = ""):
+    _, error = _mention_guild(request, guild_id)
+    if error:
+        return error
+    try:
+        roles = discord_service.search_guild_roles(guild_id, q)
+    except RuntimeError as exc:
+        return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
+    return {"success": True, "roles": roles}
 
 
 # Channel Endpoints - create webhook for channel

@@ -80,10 +80,15 @@ const renderComponentPreview = (component) => {
     (component.components || []).forEach((child) => children.appendChild(renderComponentPreview(child)));
     card.appendChild(children);
   } else if (component.type === 10) {
-    card.appendChild(createElement("div", { class: "text-sm leading-7 text-bread-ink" }, component.content || ""));
+    const content = createElement("div", { class: "text-sm leading-7 text-bread-ink" });
+    if (window.DailyBreadMentions) window.DailyBreadMentions.renderPreviewText(content, component.content || "");
+    else content.textContent = component.content || "";
+    card.appendChild(content);
   } else if (component.type === 9) {
     const row = createElement("div", { class: "flex items-start justify-between gap-3" });
     row.appendChild(createElement("div", { class: "text-sm font-semibold text-bread-ink" }, component.text || "Section"));
+    const sectionText = row.firstChild;
+    if (window.DailyBreadMentions) window.DailyBreadMentions.renderPreviewText(sectionText, component.text || "Section");
     if (component.accessory) row.appendChild(createElement("div", { class: "rounded-full bg-bread-background px-3 py-1 text-xs text-bread-muted" }, "Accessory"));
     card.appendChild(row);
   } else if (component.type === 12) {

@@ -360,6 +360,14 @@ button:disabled,
 .discord-mention { display: inline; border-radius: 3px; padding: 0 2px; background: rgb(190 138 53 / 0.16); color: #805a1c; font-weight: 600; }
 .discord-role-mention { background: rgb(190 138 53 / 0.24); }
 .discord-message .discord-mention { color: #805a1c; }
+.dailybread-mention-menu { position: fixed; z-index: 1000; overflow: hidden; border: 1px solid var(--color-border); border-radius: 0.75rem; background: var(--color-surface); box-shadow: 0 12px 28px rgb(43 43 43 / 0.18); }
+.dailybread-mention-option { display: flex; width: 100%; align-items: center; gap: 0.65rem; padding: 0.55rem 0.7rem; color: var(--color-text); text-align: left; }
+.dailybread-mention-option:hover, .dailybread-mention-option.is-selected { background: var(--color-background); }
+.dailybread-mention-avatar, .dailybread-mention-role { width: 1.75rem; height: 1.75rem; flex: 0 0 1.75rem; border-radius: 50%; object-fit: cover; }
+.dailybread-mention-role { display: block; }
+.dailybread-mention-label { display: flex; min-width: 0; flex-direction: column; font-size: 0.875rem; }
+.dailybread-mention-secondary, .dailybread-mention-empty { color: var(--color-text-secondary); font-size: 0.75rem; }
+.dailybread-mention-empty { padding: 0.75rem; }
 
 .toast-notification { animation: toast-enter 180ms ease-out both; }
 @keyframes toast-enter {

@@ -223,6 +223,7 @@
   </div>
 </div>
 
+<script src="{{ url_for('static', path='js/mentions.js') }}"></script>
 <script src="{{ url_for('static', path='js/advanced-builder.js') }}" defer></script>
 <script>
 const guildId = '{{ guild.guild_id }}';
@@ -319,7 +320,7 @@ function renderPreview() {
   }
   renderDiscordText(previewTitle, state.draft.title || 'DailyBread');
   renderDiscordText(previewDescription, state.draft.description || 'Start typing to see your devotional embed appear here.');
-  previewFooter.textContent = state.draft.footer || 'DailyBread';
+  renderDiscordText(previewFooter, state.draft.footer || 'DailyBread');
   previewColorBar.style.backgroundColor = state.draft.color || '#D6B36A';
   previewTimestamp.textContent = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date());
   if (state.draft.author) {
@@ -355,6 +356,10 @@ function updatePreviewImage(image, url, alt) {
 }
 
 function renderDiscordText(element, value) {
+  if (window.DailyBreadMentions) {
+    window.DailyBreadMentions.renderPreviewText(element, value);
+    return;
+  }
   const fragment = document.createDocumentFragment();
   const pattern = /<@&(\d+)>|<@(\d+)>|<#(\d+)>|@(everyone|here)/g;
   let lastIndex = 0;
@@ -372,6 +377,7 @@ function renderDiscordText(element, value) {
 }
 
 async function loadRoles() {
+  window.DailyBreadMentions?.prime(guildId);
   try {
     const response = await fetch(`/api/guilds/${guildId}/roles`);
     const data = await response.json();
