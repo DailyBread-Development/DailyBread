@@ -10,3 +10,6 @@ docker-compose.yml
 Dockerfile
 loki-config.yml
 tunnel-credentials.json
+.gitignore
+package-lock.json
+package.json

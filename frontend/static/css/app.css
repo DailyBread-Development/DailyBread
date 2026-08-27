@@ -183,6 +183,132 @@ button {
   background: var(--color-hover);
 }
 
+.docs-shell {
+  padding: 3rem 1rem 4rem;
+}
+
+.docs-shell-inner {
+  margin: 0 auto;
+  max-width: 72rem;
+}
+
+.docs-page-header {
+  margin-bottom: 2rem;
+}
+
+.docs-kicker {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.docs-directory-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.25rem;
+  margin-top: 1.75rem;
+}
+
+.docs-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 12.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 1.5rem;
+  background: var(--color-surface);
+  padding: 1.5rem;
+  text-decoration: none;
+  color: var(--ink);
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.docs-card:hover,
+.docs-card:focus-visible {
+  transform: translateY(-2px);
+  border-color: rgba(214, 179, 106, 0.7);
+  background: var(--color-hover);
+}
+
+.docs-card-title {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 800;
+}
+
+.docs-card-description {
+  margin-top: 0.75rem;
+  color: var(--color-text-secondary);
+  line-height: 1.65;
+}
+
+.docs-card-footer {
+  margin-top: 1.25rem;
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--color-accent);
+}
+
+.docs-detail-card {
+  border: 1px solid var(--color-border);
+  border-radius: 1.75rem;
+  background: var(--color-surface);
+  box-shadow: 0 18px 44px rgba(43, 43, 43, 0.07);
+  padding: 1.5rem;
+}
+
+.docs-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+  color: var(--color-accent);
+  font-size: 0.85rem;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.docs-article {
+  color: var(--color-text);
+  line-height: 1.8;
+}
+
+.docs-article h2 {
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+  font-size: 1.15rem;
+  font-weight: 800;
+}
+
+.docs-article p,
+.docs-article li {
+  color: var(--color-text);
+  font-size: 0.98rem;
+}
+
+.docs-article ul,
+.docs-article ol {
+  margin: 0.8rem 0 0 1.2rem;
+  padding-left: 0.5rem;
+}
+
+.docs-meta {
+  margin-top: 0.5rem;
+  color: var(--color-text-secondary);
+  font-size: 0.83rem;
+  font-weight: 600;
+}
+
+.docs-placeholder {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 1rem;
+}
+
 main > * {
   animation: page-enter 260ms ease-out both;
 }

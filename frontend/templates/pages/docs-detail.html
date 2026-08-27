@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="docs-shell">
+  <div class="docs-shell-inner">
+    <div class="docs-detail-card">
+      <a href="/docs" class="docs-back-link">← Back to Docs</a>
+
+      <article class="docs-article">
+        <p class="docs-kicker">Documentation</p>
+        <h1 class="mt-3 font-serif text-4xl font-bold text-bread-ink sm:text-5xl">{{ document_title }}</h1>
+        {% if last_updated %}
+        <p class="docs-meta">Last Updated: {{ last_updated }}</p>
+        {% endif %}
+
+        <div class="mt-6">
+          {{ document_body | safe }}
+        </div>
+      </article>
+    </div>
+  </div>
+</div>
+{% endblock %}

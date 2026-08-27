@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="docs-shell">
+  <div class="docs-shell-inner">
+    <header class="docs-page-header">
+      <p class="docs-kicker">Documentation</p>
+      <h1 class="mt-3 font-serif text-4xl font-bold text-bread-ink sm:text-5xl">Documentation</h1>
+    </header>
+
+    <div class="docs-directory-grid">
+      <a href="/docs/help" class="docs-card">
+        <div>
+          <h2 class="docs-card-title">Help</h2>
+          <p class="docs-card-description">Learn how to use DailyBread and find answers to common questions.</p>
+        </div>
+        <div class="docs-card-footer">Open Help</div>
+      </a>
+
+      <a href="/docs/terms" class="docs-card">
+        <div>
+          <h2 class="docs-card-title">Terms of Service</h2>
+          <p class="docs-card-description">Review the terms and conditions for using DailyBread.</p>
+        </div>
+        <div class="docs-card-footer">Read Terms</div>
+      </a>
+
+      <a href="/docs/privacy" class="docs-card">
+        <div>
+          <h2 class="docs-card-title">Privacy Policy</h2>
+          <p class="docs-card-description">Learn how DailyBread handles and protects your information.</p>
+        </div>
+        <div class="docs-card-footer">Read Privacy Policy</div>
+      </a>
+    </div>
+  </div>
+</div>
+{% endblock %}

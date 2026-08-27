@@ -28,7 +28,7 @@ from backend.auth import (
     fetch_discord_guilds,
     fetch_discord_user,
 )
-from backend.config import STATIC_DIR, TEMPLATES_DIR
+from backend.config import DOCS_DIR, STATIC_DIR, TEMPLATES_DIR
 from backend.routes import router as routes_router
 from backend.services import discord_service, supabase_service
 
@@ -38,12 +38,19 @@ logging.basicConfig(level=logging.INFO)
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", os.getenv("discord_client_id", ""))
 
 
-app = FastAPI(title="DailyBread", version="0.1.0")
+app = FastAPI(title="DailyBread", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.include_router(routes_router)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
+
+
+def _load_docs_file(filename: str) -> str:
+    file_path = DOCS_DIR / filename
+    if not file_path.exists():
+        return "<p class=\"docs-placeholder\">This document could not be found.</p>"
+    return file_path.read_text(encoding="utf-8")
 
 
 def _is_api_request(request: Request) -> bool:
@@ -266,6 +273,84 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
     )
     response.delete_cookie(STATE_COOKIE_NAME)
     return response
+
+
+# Documentation
+@app.get("/docs", response_class=HTMLResponse)
+async def docs_home_page(request: Request) -> HTMLResponse:
+    session = get_session(request)
+    if not session:
+        return RedirectResponse(url="/login")
+
+    return templates.TemplateResponse(
+        request,
+        "pages/docs.html",
+        build_template_context(request, {
+            "page_title": "Documentation - DailyBread",
+            "active_page": "docs",
+            "user": session["user"],
+        }),
+    )
+
+
+@app.get("/docs/help", response_class=HTMLResponse)
+async def docs_help_page(request: Request) -> HTMLResponse:
+    session = get_session(request)
+    if not session:
+        return RedirectResponse(url="/login")
+
+    return templates.TemplateResponse(
+        request,
+        "pages/docs-detail.html",
+        build_template_context(request, {
+            "page_title": "Help - DailyBread",
+            "active_page": "docs",
+            "user": session["user"],
+            "document_title": "Help",
+            "last_updated": None,
+            "document_body": _load_docs_file("help.html"),
+        }),
+    )
+
+
+@app.get("/docs/terms", response_class=HTMLResponse)
+async def docs_terms_page(request: Request) -> HTMLResponse:
+    session = get_session(request)
+    if not session:
+        return RedirectResponse(url="/login")
+
+    return templates.TemplateResponse(
+        request,
+        "pages/docs-detail.html",
+        build_template_context(request, {
+            "page_title": "Terms of Service - DailyBread",
+            "active_page": "docs",
+            "user": session["user"],
+            "document_title": "Terms of Service",
+            "last_updated": "June 2026",
+            "document_body": _load_docs_file("terms.html"),
+        }),
+    )
+
+
+@app.get("/docs/privacy", response_class=HTMLResponse)
+async def docs_privacy_page(request: Request) -> HTMLResponse:
+    session = get_session(request)
+    if not session:
+        return RedirectResponse(url="/login")
+
+    return templates.TemplateResponse(
+        request,
+        "pages/docs-detail.html",
+        build_template_context(request, {
+            "page_title": "Privacy Policy - DailyBread",
+            "active_page": "docs",
+            "user": session["user"],
+            "document_title": "Privacy Policy",
+            "last_updated": "June 2026",
+            "document_body": _load_docs_file("privacy.html"),
+        }),
+    )
 
 
 # Dashboard
