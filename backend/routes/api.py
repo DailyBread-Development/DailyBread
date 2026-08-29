@@ -3,7 +3,7 @@ from typing import Any
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
-from backend.auth import build_guild_icon_url, get_session
+from backend.auth import build_guild_icon_url, get_session, fetch_discord_guilds, fetch_discord_user
 from backend.services import bible_service, discord_service, supabase_service
 from backend.services.container_service import normalize_container_payload
 from backend.services.webhook_sender import send_webhook
@@ -475,4 +475,177 @@ async def send_container(container_id: str, request: Request):
         return {"success": all(result["success"] for result in results), "results": results}
     except Exception as exc:
         return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
+
+
+# Manual Sync Endpoints
+@api_router.post("/sync/guilds")
+async def sync_user_guilds(request: Request):
+    """Manually synchronize the user's guilds from Discord."""
+    try:
+        session = _require_session(request)
+    except ValueError as exc:
+        return _error(str(exc), status.HTTP_401_UNAUTHORIZED)
+
+    user_discord_id = str(session["user"]["id"])
+    try:
+        user_record = supabase_service.get_user_by_discord_id(user_discord_id)
+        if not user_record:
+            return _error("User not found in database.", status.HTTP_404_NOT_FOUND)
+
+        # Get the user's latest OAuth session
+        oauth_session = supabase_service.get_latest_oauth_session(user_record["id"])
+        if not oauth_session:
+            return _error("No valid Discord session found. Please log in again.", status.HTTP_401_UNAUTHORIZED)
+
+        # Fetch the user's current guilds and user info from Discord
+        access_token = oauth_session.get("access_token")
+        user_data = fetch_discord_user(access_token)
+        guilds_data = fetch_discord_guilds(access_token)
+
+        # Sync guilds
+        synced_guilds = []
+        for guild in guilds_data:
+            guild_id = str(guild.get("id", ""))
+            is_owner = guild.get("owner") is True
+            permissions = int(guild.get("permissions", 0) or 0)
+            is_admin = is_owner or ((permissions & 0x8) == 0x8)
+
+            # Only sync guilds where user is owner or admin
+            if not is_admin:
+                continue
+
+            # Check if bot is in the guild
+            has_bot = False
+            try:
+                has_bot = discord_service.is_bot_in_guild(guild_id)
+            except Exception:  # noqa: BLE001
+                pass
+
+            # Upsert guild record
+            db_guild = supabase_service.upsert_guild(
+                guild_id,
+                guild.get("name", ""),
+                guild.get("icon"),
+                str(user_data["id"]) if is_owner else None,
+                has_bot,
+            )
+
+            # Upsert guild member relationship
+            supabase_service.upsert_guild_member(
+                db_guild["id"], user_record["id"], is_owner, is_admin
+            )
+
+            # Sync channels if bot is present
+            if has_bot:
+                try:
+                    channels = discord_service.list_guild_channels(guild_id)
+                    supabase_service.upsert_channels(guild_id, [
+                        {
+                            "discord_id": str(channel["id"]),
+                            "name": channel.get("name"),
+                            "channel_type": channel.get("type", 0),
+                            "position": channel.get("position", 0),
+                            "category_id": channel.get("parent_id"),
+                            "nsfw": channel.get("nsfw", False)
+                        }
+                        for channel in channels
+                    ])
+                except Exception:  # noqa: BLE001
+                    pass
+
+            synced_guilds.append({
+                "guild_id": guild_id,
+                "name": db_guild["name"],
+                "icon": db_guild.get("icon"),
+                "icon_url": build_guild_icon_url(guild),
+                "has_bot": has_bot,
+                "is_owner": is_owner,
+                "is_admin": is_admin,
+            })
+
+        return {
+            "success": True,
+            "message": f"Synchronized {len(synced_guilds)} guild(s).",
+            "guilds": synced_guilds,
+        }
+
+    except Exception as exc:
+        import traceback
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Guild sync failed: %s", exc)
+        return _error("Unable to sync guilds. Please try again.", status.HTTP_502_BAD_GATEWAY)
+
+
+@api_router.post("/sync/guilds/{guild_id}/channels")
+async def sync_guild_channels(guild_id: str, request: Request):
+    """Manually synchronize channels for a specific guild."""
+    try:
+        session = _require_session(request)
+    except ValueError as exc:
+        return _error(str(exc), status.HTTP_401_UNAUTHORIZED)
+
+    user_discord_id = str(session["user"]["id"])
+    guild_id = str(guild_id)
+
+    try:
+        # Verify user has access to the guild
+        user_record = supabase_service.get_user_by_discord_id(user_discord_id)
+        if not user_record:
+            return _error("User not found in database.", status.HTTP_404_NOT_FOUND)
+
+        # Check if user has access to this guild
+        if not supabase_service.user_has_guild_access(user_record["id"], guild_id):
+            return _error("You do not have access to this guild.", status.HTTP_403_FORBIDDEN)
+
+        # Verify guild exists and bot is present
+        guild = supabase_service.get_guild_by_discord_id(guild_id)
+        if not guild:
+            return _error("Guild not found. Sync guilds first.", status.HTTP_404_NOT_FOUND)
+
+        if not guild.get("has_bot"):
+            return _error("DailyBread bot is not in this guild.", status.HTTP_403_FORBIDDEN)
+
+        # Fetch channels from Discord
+        try:
+            channels = discord_service.list_guild_channels(guild_id)
+        except RuntimeError as exc:
+            return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
+
+        # Sync channels to Supabase
+        synced_channels = supabase_service.upsert_channels(guild_id, [
+            {
+                "discord_id": str(channel["id"]),
+                "name": channel.get("name"),
+                "channel_type": channel.get("type", 0),
+                "position": channel.get("position", 0),
+                "category_id": channel.get("parent_id"),
+                "nsfw": channel.get("nsfw", False)
+            }
+            for channel in channels
+        ])
+
+        # Filter for text channels
+        text_channels = [
+            {
+                "id": str(ch["discord_id"]),
+                "name": ch.get("name"),
+                "type": ch.get("channel_type"),
+            }
+            for ch in synced_channels
+            if ch.get("channel_type") == 0
+        ]
+
+        return {
+            "success": True,
+            "message": f"Synchronized {len(text_channels)} channel(s).",
+            "channels": text_channels,
+        }
+
+    except Exception as exc:
+        import traceback
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Channel sync failed: %s", exc)
+        return _error("Unable to sync channels. Please try again.", status.HTTP_502_BAD_GATEWAY)
 

@@ -59,6 +59,12 @@ def store_oauth_session(user_id: str, token_data: dict[str, Any]) -> dict[str, A
     return rows[0]
 
 
+def get_latest_oauth_session(user_id: str) -> Optional[dict[str, Any]]:
+    """Get the most recent valid OAuth session for a user."""
+    rows = _execute(supabase.table("oauth_sessions").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(1))
+    return rows[0] if rows else None
+
+
 def get_guild_by_discord_id(discord_id: str) -> Optional[dict[str, Any]]:
     rows = _execute(supabase.table("guilds").select("*").eq("discord_id", int(discord_id)).limit(1))
     return rows[0] if rows else None

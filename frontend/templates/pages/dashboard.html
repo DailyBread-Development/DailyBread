@@ -49,7 +49,12 @@
           <h2 class="font-serif text-3xl font-bold text-bread-ink" >Your Discord Servers</h2>
           <p class="mt-2 text-sm text-black/65" >Click to manage channels, webhooks, and create Bible embeds.</p>
         </div>
-        <span class="w-fit rounded-full bg-bread-linen px-4 py-2 text-sm font-bold uppercase tracking-[0.15em] text-bread-ink" >{{ guilds | length }} servers</span>
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <span class="w-fit rounded-full bg-bread-linen px-4 py-2 text-sm font-bold uppercase tracking-[0.15em] text-bread-ink" >{{ guilds | length }} servers</span>
+          <button id="sync-guilds-btn" type="button" class="rounded-2xl bg-bread-gold px-4 py-2 text-sm font-bold uppercase tracking-[0.15em] text-white transition hover:bg-[#c79f4a]" onclick="syncGuilds()">
+            Sync Guilds
+          </button>
+        </div>
       </div>
 
       {% if guilds %}
@@ -163,6 +168,58 @@ async function addBotToGuild(guildId) {
   const botInviteUrl = `https://discord.com/oauth2/authorize?client_id=1508328779280285736&permissions=537119808&integration_type=0&scope=bot+applications.commands`;
   window.open(botInviteUrl, '_blank');
   console.log('Opening bot invite for guild:', guildId);
+}
+
+async function syncGuilds() {
+  const btn = document.getElementById('sync-guilds-btn');
+  const originalText = btn.textContent;
+  
+  try {
+    btn.disabled = true;
+    btn.textContent = '⟳ Syncing...';
+    
+    const response = await fetch('/api/sync/guilds', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok || !data.success) {
+      showNotification('Unable to sync guilds', 'error');
+      btn.textContent = originalText;
+      btn.disabled = false;
+      return;
+    }
+    
+    // Show success message
+    showNotification(`Guilds synced successfully (${data.guilds?.length || 0} guild(s))`, 'success');
+    
+    // Refresh the page after a short delay
+    setTimeout(() => {
+      window.location.reload();
+    }, 1000);
+    
+  } catch (error) {
+    console.error('Sync error:', error);
+    showNotification('Unable to sync guilds', 'error');
+    btn.textContent = originalText;
+    btn.disabled = false;
+  }
+}
+
+function showNotification(message, type = 'info') {
+  // Create a simple notification (you can enhance this with a toast library)
+  const notification = document.createElement('div');
+  notification.className = `fixed top-4 right-4 rounded-2xl px-6 py-3 text-sm font-semibold text-white z-50 ${
+    type === 'success' ? 'bg-emerald-600' : type === 'error' ? 'bg-red-600' : 'bg-blue-600'
+  }`;
+  notification.textContent = message;
+  document.body.appendChild(notification);
+  
+  setTimeout(() => {
+    notification.remove();
+  }, 3000);
 }
 </script>
 {% endblock %}
