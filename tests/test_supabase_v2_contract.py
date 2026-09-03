@@ -1,4 +1,4 @@
-"""Regression checks for the DailyBread v2 Supabase rebuild.
+"""Regression checks for the DailyBread PostgreSQL data layer.
 
 These tests are intentionally local and read-only: they validate the versioned
 schema and synchronization boundaries without requiring live Discord/OAuth data.
@@ -71,7 +71,7 @@ def test_schema_has_indexes_for_high_volume_lookup_paths() -> None:
         assert f"create index {index}" in SCHEMA
 
 
-def test_bot_has_no_supabase_access() -> None:
+def test_bot_has_no_direct_database_access() -> None:
     imported_modules = {
         alias.name
         for tree in BOT_TREES
@@ -92,13 +92,12 @@ def test_bot_has_no_supabase_access() -> None:
         if isinstance(node, ast.Name)
     }
 
-    assert not any("supabase" in module for module in imported_modules)
-    assert "supabase_service" not in executable_names
-    assert "create_client" not in executable_names
+    assert not any("database_service" in module for module in imported_modules)
+    assert "ConnectionPool" not in executable_names
 
 
 def test_login_flow_is_the_guild_sync_boundary() -> None:
-    assert "a website login is the only event that updates supabase" in LOGIN_FLOW
-    assert "supabase_service.upsert_guild(" in LOGIN_FLOW
-    assert "supabase_service.upsert_guild_member(" in LOGIN_FLOW
-    assert "supabase_service.upsert_channels(" in LOGIN_FLOW
+    assert "a website login is the only event that updates postgresql" in LOGIN_FLOW
+    assert "database_service.upsert_guild(" in LOGIN_FLOW
+    assert "database_service.upsert_guild_member(" in LOGIN_FLOW
+    assert "database_service.upsert_channels(" in LOGIN_FLOW

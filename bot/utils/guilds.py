@@ -1,6 +1,6 @@
 """Discord guild metadata helpers.
 
-The bot intentionally never writes Supabase. Database synchronization occurs only
+The bot intentionally never writes PostgreSQL. Database synchronization occurs only
 in the website OAuth login flow for guilds selected by the logging-in user.
 """
 from __future__ import annotations

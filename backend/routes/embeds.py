@@ -5,7 +5,7 @@ from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
 from backend.auth import get_session
-from backend.services import supabase_service
+from backend.services import database_service
 from backend.services.embed_service import create_embed_for_user, get_embed_for_user, list_embeds_for_user, send_embed
 
 router = APIRouter()
@@ -125,31 +125,31 @@ async def send_embed_route(embed_id: str, request: Request):
     if not guild_id and not channel_id and not webhook_id:
         return _error("guild_id, channel_id, or webhook_id is required.", status.HTTP_400_BAD_REQUEST)
 
-    embed = supabase_service.get_embed_by_id(embed_id)
+    embed = database_service.get_embed_by_id(embed_id)
     if not embed:
         return _error("Embed not found.", status.HTTP_404_NOT_FOUND)
 
-    user_id = supabase_service.get_user_id_by_discord_id(str(session["user"]["id"]))
+    user_id = database_service.get_user_id_by_discord_id(str(session["user"]["id"]))
     if not user_id or str(embed.get("creator_id")) != str(user_id):
         return _error("Only the embed creator may send this embed.", status.HTTP_403_FORBIDDEN)
 
     if webhook_id:
-        webhook = supabase_service.get_webhook_by_id(webhook_id)
+        webhook = database_service.get_webhook_by_id(webhook_id)
         if not webhook:
             return _error("Webhook not found.", status.HTTP_404_NOT_FOUND)
         if guild_id and str(webhook.get("guild_discord_id")) != guild_id:
             return _error("Selected webhook does not belong to the requested guild.", status.HTTP_400_BAD_REQUEST)
-        if not supabase_service.user_has_guild_access(user_id, str(webhook.get("guild_discord_id") or "")):
+        if not database_service.user_has_guild_access(user_id, str(webhook.get("guild_discord_id") or "")):
             return _error("You do not have permission to send to this guild.", status.HTTP_403_FORBIDDEN)
 
     if channel_id:
-        webhooks = supabase_service.get_webhooks_for_channel(channel_id)
+        webhooks = database_service.get_webhooks_for_channel(channel_id)
         if not webhooks:
             return _error("No webhook found for the selected channel.", status.HTTP_404_NOT_FOUND)
-        if not any(supabase_service.user_has_guild_access(user_id, str(wh.get("guild_discord_id") or "")) for wh in webhooks):
+        if not any(database_service.user_has_guild_access(user_id, str(wh.get("guild_discord_id") or "")) for wh in webhooks):
             return _error("You do not have permission to send to this channel's guild.", status.HTTP_403_FORBIDDEN)
 
-    if guild_id and not supabase_service.user_has_guild_access(user_id, guild_id):
+    if guild_id and not database_service.user_has_guild_access(user_id, guild_id):
         return _error("You do not have permission to send to this guild.", status.HTTP_403_FORBIDDEN)
 
     result = await send_embed(

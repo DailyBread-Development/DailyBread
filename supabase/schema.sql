@@ -1,4 +1,4 @@
--- DailyBread v2: fresh schema. Apply this to a new Supabase database.
+-- DailyBread v2: existing PostgreSQL schema. This file is not applied by the application.
 -- This deliberately does not migrate or retain the legacy DailyBread tables.
 create extension if not exists pgcrypto;
 

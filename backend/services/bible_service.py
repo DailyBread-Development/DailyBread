@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 import requests
 
-from backend.services.supabase_service import get_bible_cache, store_bible_cache
+from backend.services.database_service import get_bible_cache, store_bible_cache
 
 # Load environment variables from .env file if it exists
 BASE_DIR = Path(__file__).resolve().parent.parent

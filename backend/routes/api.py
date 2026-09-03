@@ -4,7 +4,7 @@ from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
 from backend.auth import build_guild_icon_url, get_session, fetch_discord_guilds, fetch_discord_user
-from backend.services import bible_service, discord_service, supabase_service
+from backend.services import bible_service, discord_service, database_service
 from backend.services.container_service import normalize_container_payload
 from backend.services.webhook_sender import send_webhook
 
@@ -109,13 +109,13 @@ async def get_guilds(request: Request):
     except ValueError as exc:
         return _error(str(exc), status.HTTP_401_UNAUTHORIZED)
 
-    user_record = supabase_service.get_user_by_discord_id(str(session["user"]["id"]))
+    user_record = database_service.get_user_by_discord_id(str(session["user"]["id"]))
     if not user_record:
         # A valid website session was created at OAuth login. Do not turn a
         # later API request into an implicit guild synchronization event.
         return {"success": True, "guilds": session.get("guilds", [])}
 
-    guilds = supabase_service.get_user_guilds(user_record["id"])
+    guilds = database_service.get_user_guilds(user_record["id"])
     for guild in guilds:
         guild["icon_url"] = build_guild_icon_url({
             "id": str(guild.get("guild_id") or ""),
@@ -261,7 +261,7 @@ async def create_channel_webhook(guild_id: str, channel_id: str, request: Reques
     if not _has_guild_permission(guild):
         return _error("Insufficient permissions for this guild.", status.HTTP_403_FORBIDDEN)
 
-    existing = supabase_service.get_webhooks_for_channel(channel_id)
+    existing = database_service.get_webhooks_for_channel(channel_id)
     if existing:
         return _error(
             "A webhook already exists for this channel. Use an existing webhook or create a new channel target.",
@@ -269,14 +269,14 @@ async def create_channel_webhook(guild_id: str, channel_id: str, request: Reques
         )
 
     try:
-        channel_name_row = supabase_service.get_channel_by_discord_id(channel_id)
+        channel_name_row = database_service.get_channel_by_discord_id(channel_id)
         channel_label = (channel_name_row.get("name") if channel_name_row else None) or "dailybread"
         webhook_name = str(channel_label).strip().lstrip("#").replace(" ", "-").lower()
         webhook = discord_service.create_webhook(channel_id, webhook_name or "dailybread")
     except RuntimeError as exc:
         return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
 
-    webhook_record = supabase_service.create_webhook_record(webhook)
+    webhook_record = database_service.create_webhook_record(webhook)
     return {
         "success": True,
         "webhook": {
@@ -325,16 +325,16 @@ async def create_embed(request: Request):
         except Exception as exc:
             return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
 
-    # Supabase upsert user and embed record
+    # PostgreSQL upsert user and embed record
     user_profile = session["user"]
-    user_record = supabase_service.upsert_user_by_discord_id(
+    user_record = database_service.upsert_user_by_discord_id(
         discord_id=str(user_profile["id"]),
         username=user_profile.get("username", ""),
         avatar=user_profile.get("avatar", ""),
         global_name=user_profile.get("global_name", ""),
     )
 
-    embed_record = supabase_service.create_embed(
+    embed_record = database_service.create_embed(
         creator_id=user_record["id"],
         title=title,
         description=description,
@@ -367,7 +367,7 @@ async def get_guild_webhooks(guild_id: str, request: Request):
         return _error("Guild not found in your Discord session.", status.HTTP_403_FORBIDDEN)
 
     try:
-        webhooks = supabase_service.get_webhooks_for_guild(guild_id)
+        webhooks = database_service.get_webhooks_for_guild(guild_id)
     except Exception as exc:
         return _error(str(exc) or "Failed to retrieve webhooks.", status.HTTP_502_BAD_GATEWAY)
 
@@ -393,7 +393,7 @@ async def delete_webhook(webhook_id: str, request: Request):
     except ValueError as exc:
         return _error(str(exc), status.HTTP_401_UNAUTHORIZED)
 
-    webhook = supabase_service.get_webhook_by_id(webhook_id)
+    webhook = database_service.get_webhook_by_id(webhook_id)
     if not webhook:
         return _error("Webhook not found.", status.HTTP_404_NOT_FOUND)
 
@@ -408,7 +408,7 @@ async def delete_webhook(webhook_id: str, request: Request):
         return _error("Insufficient permissions for this guild.", status.HTTP_403_FORBIDDEN)
 
     try:
-        supabase_service.delete_webhook(webhook_id)
+        database_service.delete_webhook(webhook_id)
         return {"success": True, "message": "Webhook deleted successfully."}
     except Exception as exc:
         return _error(str(exc) or "Failed to delete webhook.", status.HTTP_502_BAD_GATEWAY)
@@ -418,10 +418,10 @@ async def delete_webhook(webhook_id: str, request: Request):
 async def list_containers(request: Request):
     try:
         session = _require_session(request)
-        user_id = supabase_service.get_user_id_by_discord_id(str(session["user"]["id"]))
+        user_id = database_service.get_user_id_by_discord_id(str(session["user"]["id"]))
         if not user_id:
             return {"success": True, "containers": []}
-        containers = supabase_service.list_containers_for_user(user_id)
+        containers = database_service.list_containers_for_user(user_id)
         for container in containers:
             links = container.pop("guild_containers", [])
             container["container_json"] = container.pop("data")
@@ -442,11 +442,11 @@ async def create_container(request: Request):
             guild = _find_guild(session, guild_id)
             if not guild or not _has_guild_permission(guild):
                 return _error("Insufficient permissions for this guild.", status.HTTP_403_FORBIDDEN)
-        user_id = supabase_service.get_user_id_by_discord_id(str(session["user"]["id"]))
+        user_id = database_service.get_user_id_by_discord_id(str(session["user"]["id"]))
         if not user_id:
             user = session["user"]
-            user_id = supabase_service.upsert_user_by_discord_id(str(user["id"]), user.get("username", ""), user.get("avatar"), user.get("global_name"))["id"]
-        container = supabase_service.create_container(user_id, str(data.get("name") or "Untitled container"), payload, guild_id)
+            user_id = database_service.upsert_user_by_discord_id(str(user["id"]), user.get("username", ""), user.get("avatar"), user.get("global_name"))["id"]
+        container = database_service.create_container(user_id, str(data.get("name") or "Untitled container"), payload, guild_id)
         return {"success": True, "container_id": container["id"], "container": container}
     except ValueError as exc:
         return _error(str(exc), status.HTTP_400_BAD_REQUEST)
@@ -459,19 +459,19 @@ async def send_container(container_id: str, request: Request):
     try:
         session = _require_session(request)
         body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
-        user_id = supabase_service.get_user_id_by_discord_id(str(session["user"]["id"]))
-        container = supabase_service.get_container_for_user(container_id, user_id or "") if user_id else None
+        user_id = database_service.get_user_id_by_discord_id(str(session["user"]["id"]))
+        container = database_service.get_container_for_user(container_id, user_id or "") if user_id else None
         channel_id = str(body.get("channel_id") or "")
         if not user_id:
             return _error("Authentication required.", status.HTTP_401_UNAUTHORIZED)
         if not container or not channel_id:
             return _error("A saved container and target channel are required.", status.HTTP_400_BAD_REQUEST)
-        webhooks = supabase_service.get_webhooks_for_channel(channel_id)
-        if not webhooks or not any(supabase_service.user_has_guild_access(str(user_id), wh["guild_discord_id"]) for wh in webhooks):
+        webhooks = database_service.get_webhooks_for_channel(channel_id)
+        if not webhooks or not any(database_service.user_has_guild_access(str(user_id), wh["guild_discord_id"]) for wh in webhooks):
             return _error("No authorized webhook exists for this channel.", status.HTTP_403_FORBIDDEN)
         results = [await send_webhook(webhook, container["data"]) for webhook in webhooks]
         for webhook, result in zip(webhooks, results):
-            supabase_service.audit("container.sent" if result["success"] else "container.send_failed", webhook["guild_id"], user_id, {"container_id": container_id, "webhook_id": webhook["discord_id"]})
+            database_service.audit("container.sent" if result["success"] else "container.send_failed", webhook["guild_id"], user_id, {"container_id": container_id, "webhook_id": webhook["discord_id"]})
         return {"success": all(result["success"] for result in results), "results": results}
     except Exception as exc:
         return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
@@ -488,12 +488,12 @@ async def sync_user_guilds(request: Request):
 
     user_discord_id = str(session["user"]["id"])
     try:
-        user_record = supabase_service.get_user_by_discord_id(user_discord_id)
+        user_record = database_service.get_user_by_discord_id(user_discord_id)
         if not user_record:
             return _error("User not found in database.", status.HTTP_404_NOT_FOUND)
 
         # Get the user's latest OAuth session
-        oauth_session = supabase_service.get_latest_oauth_session(user_record["id"])
+        oauth_session = database_service.get_latest_oauth_session(user_record["id"])
         if not oauth_session:
             return _error("No valid Discord session found. Please log in again.", status.HTTP_401_UNAUTHORIZED)
 
@@ -522,7 +522,7 @@ async def sync_user_guilds(request: Request):
                 pass
 
             # Upsert guild record
-            db_guild = supabase_service.upsert_guild(
+            db_guild = database_service.upsert_guild(
                 guild_id,
                 guild.get("name", ""),
                 guild.get("icon"),
@@ -531,7 +531,7 @@ async def sync_user_guilds(request: Request):
             )
 
             # Upsert guild member relationship
-            supabase_service.upsert_guild_member(
+            database_service.upsert_guild_member(
                 db_guild["id"], user_record["id"], is_owner, is_admin
             )
 
@@ -539,7 +539,7 @@ async def sync_user_guilds(request: Request):
             if has_bot:
                 try:
                     channels = discord_service.list_guild_channels(guild_id)
-                    supabase_service.upsert_channels(guild_id, [
+                    database_service.upsert_channels(guild_id, [
                         {
                             "discord_id": str(channel["id"]),
                             "name": channel.get("name"),
@@ -590,16 +590,16 @@ async def sync_guild_channels(guild_id: str, request: Request):
 
     try:
         # Verify user has access to the guild
-        user_record = supabase_service.get_user_by_discord_id(user_discord_id)
+        user_record = database_service.get_user_by_discord_id(user_discord_id)
         if not user_record:
             return _error("User not found in database.", status.HTTP_404_NOT_FOUND)
 
         # Check if user has access to this guild
-        if not supabase_service.user_has_guild_access(user_record["id"], guild_id):
+        if not database_service.user_has_guild_access(user_record["id"], guild_id):
             return _error("You do not have access to this guild.", status.HTTP_403_FORBIDDEN)
 
         # Verify guild exists and bot is present
-        guild = supabase_service.get_guild_by_discord_id(guild_id)
+        guild = database_service.get_guild_by_discord_id(guild_id)
         if not guild:
             return _error("Guild not found. Sync guilds first.", status.HTTP_404_NOT_FOUND)
 
@@ -612,8 +612,8 @@ async def sync_guild_channels(guild_id: str, request: Request):
         except RuntimeError as exc:
             return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
 
-        # Sync channels to Supabase
-        synced_channels = supabase_service.upsert_channels(guild_id, [
+        # Sync channels to PostgreSQL
+        synced_channels = database_service.upsert_channels(guild_id, [
             {
                 "discord_id": str(channel["id"]),
                 "name": channel.get("name"),

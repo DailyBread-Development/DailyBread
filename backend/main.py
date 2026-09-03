@@ -30,7 +30,7 @@ from backend.auth import (
 )
 from backend.config import DOCS_DIR, STATIC_DIR, TEMPLATES_DIR
 from backend.routes import router as routes_router
-from backend.services import discord_service, supabase_service
+from backend.services import discord_service, database_service
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -99,15 +99,15 @@ def build_template_context(request: Request, extra: dict | None = None) -> dict:
 # pylint: disable=invalid-name 
 def _get_user_guilds_from_db(session: dict) -> list[dict]:
     try:
-        user_record = supabase_service.get_user_by_discord_id(str(session["user"]["id"]))
+        user_record = database_service.get_user_by_discord_id(str(session["user"]["id"]))
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Unable to load guilds from Supabase; using session guilds. error=%s", exc)
+        logger.warning("Unable to load guilds from PostgreSQL; using session guilds. error=%s", exc)
         return session.get("guilds", [])
 
     if not user_record:
         return session.get("guilds", [])
 
-    guilds = supabase_service.get_user_guilds(user_record["id"])
+    guilds = database_service.get_user_guilds(user_record["id"])
     for guild in guilds:
         guild["icon_url"] = build_guild_icon_url({"id": guild.get("guild_id"), "icon": guild.get("icon")})
     return guilds
@@ -189,7 +189,7 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
         guilds_data = fetch_discord_guilds(access_token)
         logger.info("Discord guilds fetched count=%s", len(guilds_data))
 
-        logger.info("Supabase OAuth sync started")
+        logger.info("PostgreSQL OAuth sync started")
         user = {
             "id": user_data["id"],
             "username": user_data["username"],
@@ -197,15 +197,15 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
             "avatar_url": build_avatar_url(user_data),
         }
 
-        user_record = supabase_service.upsert_user_by_discord_id(
+        user_record = database_service.upsert_user_by_discord_id(
             discord_id=str(user_data["id"]),
             username=user_data.get("username", ""),
             avatar=user.get("avatar"),
             global_name=user_data.get("global_name", ""),
         )
-        # A website login is the only event that updates Supabase. The bot
+        # A website login is the only event that updates PostgreSQL. The bot
         # never performs background database synchronization.
-        supabase_service.store_oauth_session(user_record["id"], token_data)
+        database_service.store_oauth_session(user_record["id"], token_data)
         synced_guilds = []
         for guild in guilds_data:
             guild_id = str(guild.get("id", ""))
@@ -224,20 +224,20 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
                 logger.warning("Bot presence check failed guild_id=%s error=%s", guild_id, exc)
 
             # Only the logged-in user's manageable guilds are written.
-            db_guild = supabase_service.upsert_guild(
+            db_guild = database_service.upsert_guild(
                 guild_id,
                 guild.get("name", ""),
                 guild.get("icon"),
                 str(user_data["id"]) if is_owner else None,
                 has_bot,
             )
-            supabase_service.upsert_guild_member(
+            database_service.upsert_guild_member(
                 db_guild["id"], user_record["id"], is_owner, is_admin
             )
             if has_bot:
                 try:
                     channels = discord_service.list_guild_channels(guild_id)
-                    supabase_service.upsert_channels(guild_id, [
+                    database_service.upsert_channels(guild_id, [
                         {"discord_id": str(channel["id"]), "name": channel.get("name"), "channel_type": channel.get("type", 0), "position": channel.get("position", 0), "category_id": channel.get("parent_id"), "nsfw": channel.get("nsfw", False)}
                         for channel in channels
                     ])
@@ -255,7 +255,7 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
                 }
             )
 
-        logger.info("Supabase OAuth sync completed guild_count=%s", len(synced_guilds))
+        logger.info("PostgreSQL OAuth sync completed guild_count=%s", len(synced_guilds))
     except Exception as exc:
         logger.error("OAuth callback failed: %s\n%s", exc, traceback.format_exc())
         raise

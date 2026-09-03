@@ -13,3 +13,4 @@ tunnel-credentials.json
 .gitignore
 package-lock.json
 package.json
+tests/
