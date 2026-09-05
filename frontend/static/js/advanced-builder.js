@@ -321,7 +321,7 @@ const loadSavedContainers = async () => {
 };
 
 const getCurrentGuildId = () => document.getElementById("container-guild")?.value || "";
-const getCurrentChannelId = () => document.getElementById("builder-channel-id")?.value || document.getElementById("container-channel")?.value || "";
+const getCurrentChannelId = () => document.getElementById("container-channel")?.value || "";
 
 const saveContainer = async () => {
   const guildId = getCurrentGuildId();

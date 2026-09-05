@@ -12,8 +12,9 @@
           <div>
             <p class="text-xs font-extrabold uppercase tracking-[0.2em] text-bread-sage">Embed Builder</p>
             <h1 class="mt-3 font-serif text-3xl font-bold text-bread-ink ">Create scripture message for {{ guild.name }}</h1>
-            <p class="mt-3 max-w-2xl text-sm leading-6 text-black/65">Search verses, customize your embed, and send to a channel.</p>
+            <p class="mt-3 max-w-2xl text-sm leading-6 text-black/65">Choose destinations, then search verses and customize an embed to send to them.</p>
           </div>
+          <a href="/dashboard/builder/mass-selection" class="inline-flex min-h-11 items-center justify-center rounded-2xl bg-bread-ink px-5 text-sm font-semibold text-white transition hover:bg-black">Choose destinations</a>
         </div>
       </section>
     </div>
@@ -122,22 +123,6 @@
               </div>
             </div>
 
-            <div class="grid gap-4 sm:grid-cols-2">
-              <div>
-                <label class="block text-sm font-semibold text-bread-ink">Channel</label>
-                <input id="channel-search-input" type="text" placeholder="Search channels..." class="mt-3 w-full rounded-2xl border border-black/10 bg-bread-cream px-4 py-4 text-base text-bread-ink outline-none transition focus:border-bread-gold focus:ring-4 focus:ring-bread-gold/15" />
-                <select id="builder-channel-id" class="mt-3 w-full rounded-2xl border border-black/10 bg-bread-cream px-4 py-4 text-base text-bread-ink outline-none transition focus:border-bread-gold focus:ring-4 focus:ring-bread-gold/15">
-                  <option value="">Select a channel</option>
-                </select>
-              </div>
-              <div>
-                <label class="block text-sm font-semibold text-bread-ink">Webhook</label>
-                <select id="builder-webhook-id" class="mt-3 w-full rounded-2xl border border-black/10 bg-bread-cream px-4 py-4 text-base text-bread-ink outline-none transition focus:border-bread-gold focus:ring-4 focus:ring-bread-gold/15">
-                  <option value="">Select webhook</option>
-                </select>
-              </div>
-            </div>
-
             <input id="embed-verse-reference" type="hidden" />
           </div>
         </section>
@@ -227,7 +212,6 @@
 <script src="{{ url_for('static', path='js/advanced-builder.js') }}" defer></script>
 <script>
 const guildId = '{{ guild.guild_id }}';
-const selectedChannelId = '{{ selected_channel_id }}';
 const state = {
   verse: null,
   draft: {
@@ -240,8 +224,6 @@ const state = {
     thumbnail_url: '',
     author: '',
     verse_reference: '',
-    channel_id: selectedChannelId,
-    webhook_id: '',
   },
   savedEmbedId: null,
   loading: false,
@@ -266,12 +248,9 @@ const embedThumbnailUrl = getEl('#embed-thumbnail-url');
 const embedAuthor = getEl('#embed-author');
 const embedVerseReference = getEl('#embed-verse-reference');
 const presetSelect = getEl('#preset-select');
-const channelSelect = getEl('#builder-channel-id');
-const webhookSelect = getEl('#builder-webhook-id');
 const saveButton = getEl('#save-button');
 const sendButton = getEl('#send-button');
 const builderStatus = getEl('#builder-status');
-const channelSearchInput = getEl('#channel-search-input');
 const previewTitle = getEl('#preview-title');
 const previewDescription = getEl('#preview-description');
 const previewFooter = getEl('#preview-footer');
@@ -283,7 +262,6 @@ const previewThumbnail = getEl('#preview-thumbnail');
 const previewAuthor = getEl('#preview-author');
 const previewTimestamp = getEl('#preview-timestamp');
 
-let availableChannels = [];
 const roleNames = new Map();
 let selectedDestinations = [];
 try {
@@ -405,12 +383,6 @@ function updateDraft() {
   state.draft.thumbnail_url = embedThumbnailUrl.value.trim();
   state.draft.author = embedAuthor.value.trim();
   state.draft.verse_reference = embedVerseReference.value;
-  state.draft.channel_id = channelSelect.value;
-  state.draft.webhook_id = webhookSelect.value;
-  const containerChannel = document.getElementById('container-channel');
-  if (containerChannel) {
-    containerChannel.value = channelSelect.value;
-  }
   renderPreview();
 }
 
@@ -424,50 +396,6 @@ function applyPreset(presetKey) {
   state.draft.footer = preset.footer;
   state.draft.color = preset.color;
   renderPreview();
-}
-
-function renderChannelOptions(channels) {
-  const query = (channelSearchInput?.value || '').trim().toLowerCase();
-  const filteredChannels = (channels || []).filter((channel) => channel.name.toLowerCase().includes(query));
-
-  channelSelect.innerHTML = '<option value="">Select a channel</option>' + filteredChannels.map(c => `<option value="${c.id}">#${c.name}</option>`).join('');
-  if (selectedChannelId && filteredChannels.some((channel) => channel.id === selectedChannelId)) {
-    channelSelect.value = selectedChannelId;
-    state.draft.channel_id = selectedChannelId;
-  } else {
-    channelSelect.value = '';
-    state.draft.channel_id = '';
-  }
-}
-
-async function loadChannels() {
-  try {
-    const response = await fetch(`/api/guilds/${guildId}/channels`);
-    const data = await response.json();
-    if (!response.ok || !data.success) throw new Error(data.error || 'Failed to load channels');
-    
-    const channels = data.channels || [];
-    availableChannels = channels;
-    renderChannelOptions(channels);
-  } catch (error) {
-    console.error('Channel load error:', error);
-  }
-}
-
-async function loadWebhooks() {
-  try {
-    const response = await fetch(`/api/guilds/${guildId}/webhooks`);
-    const data = await response.json();
-    if (!response.ok || !data.success) {
-      webhookSelect.innerHTML = '<option value="">No webhooks available</option>';
-      return;
-    }
-    
-    const webhooks = data.webhooks || [];
-    webhookSelect.innerHTML = '<option value="">Select webhook</option>' + webhooks.map(w => `<option value="${w.id}">${w.name || 'Webhook'}</option>`).join('');
-  } catch (error) {
-    console.error('Webhook load error:', error);
-  }
 }
 
 async function parseJsonResponse(response) {
@@ -582,9 +510,7 @@ async function saveEmbed() {
 async function sendEmbed() {
   if (state.loading) return;
 
-  const destinations = selectedDestinations.length
-    ? selectedDestinations
-    : (state.draft.channel_id ? [{ guild_id: guildId, channel_id: state.draft.channel_id }] : []);
+  const destinations = selectedDestinations;
 
   if (!destinations.length) {
     setStatus('Select at least one destination channel before sending.', 'error');
@@ -631,9 +557,7 @@ verseSearchButton.addEventListener('click', searchVerse);
 verseSearchInput.addEventListener('keydown', (e) => e.key === 'Enter' && searchVerse());
 useVerseButton.addEventListener('click', useVerse);
 [presetSelect, messageContent, embedTitle, embedDescription, embedColor, embedFooter, embedImageUrl, embedThumbnailUrl, embedAuthor].forEach((el) => el.addEventListener('input', updateDraft));
-[channelSelect, webhookSelect].forEach((el) => el.addEventListener('change', updateDraft));
 presetSelect.addEventListener('change', (e) => applyPreset(e.target.value));
-channelSearchInput?.addEventListener('input', () => renderChannelOptions(availableChannels));
 sendButton.addEventListener('click', async () => {
   if (activeMode === 'advanced') {
     if (window.DailyBreadAdvancedBuilder?.sendContainer) {
@@ -651,8 +575,6 @@ document.getElementById('mode-normal')?.addEventListener('click', () => setMode(
 document.getElementById('mode-advanced')?.addEventListener('click', () => setMode('advanced'));
 setMode('normal');
 
-loadChannels();
-loadWebhooks();
 loadRoles();
 renderPreview();
 </script>
