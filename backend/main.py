@@ -443,6 +443,23 @@ async def builder_page(request: Request) -> HTMLResponse:
     )
 
 
+@app.get("/dashboard/builder/mass-selection", response_class=HTMLResponse)
+async def mass_selection_page(request: Request) -> HTMLResponse:
+    session = get_session(request)
+    if not session:
+        return RedirectResponse(url="/login")
+
+    return templates.TemplateResponse(
+        request,
+        "pages/mass-selection.html",
+        build_template_context(request, {
+            "page_title": "Choose Destinations - DailyBread",
+            "active_page": "builder",
+            "user": session["user"],
+        }),
+    )
+
+
 @app.get("/dashboard/advanced-builder")
 async def advanced_builder_page(request: Request) -> RedirectResponse:
     return RedirectResponse(url="/dashboard/builder")

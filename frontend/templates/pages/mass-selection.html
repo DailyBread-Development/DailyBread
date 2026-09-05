@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="min-h-[calc(100vh-6rem)] bg-bread-background py-8">
+  <div class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
+    <a href="/dashboard/builder" class="text-sm font-semibold text-bread-gold transition hover:text-bread-ink">Back to Embed Builder</a>
+    <div class="mt-4 rounded-[1.5rem] border border-bread-border bg-bread-surface p-6 shadow-soft sm:p-8">
+      <p class="text-sm font-extrabold uppercase tracking-[0.18em] text-bread-muted">Mass Selection</p>
+      <h1 class="mt-3 font-serif text-3xl font-bold text-bread-ink">Choose embed destinations.</h1>
+      <p class="mt-3 text-sm leading-6 text-bread-muted">Select servers, then the text channels that should receive one shared embed.</p>
+    </div>
+
+    <section class="mt-6 rounded-[1.5rem] border border-black/10 bg-white/95 p-6 shadow-sm">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 class="font-serif text-2xl font-bold text-bread-ink">Servers</h2>
+          <p id="selection-count" class="mt-2 text-sm font-semibold text-bread-sage">Servers Selected: 0 · Channels Selected: 0</p>
+        </div>
+        <div class="flex gap-2">
+          <button id="select-all-guilds" type="button" class="rounded-xl border border-bread-border bg-bread-background px-3 py-2 text-xs font-bold text-bread-ink">Select all</button>
+          <button id="clear-selection" type="button" class="rounded-xl border border-bread-border bg-bread-background px-3 py-2 text-xs font-bold text-bread-ink">Clear</button>
+        </div>
+      </div>
+      <div id="guild-list" class="mt-5 grid gap-3 sm:grid-cols-2"></div>
+      <p id="guild-empty" class="mt-5 hidden text-sm font-semibold text-bread-muted">No DailyBread servers are available.</p>
+    </section>
+
+    <section class="mt-6 rounded-[1.5rem] border border-black/10 bg-white/95 p-6 shadow-sm">
+      <h2 class="font-serif text-2xl font-bold text-bread-ink">Channels</h2>
+      <p class="mt-2 text-sm text-bread-muted">Channels remain grouped beneath their server.</p>
+      <div id="channel-list" class="mt-5 space-y-4"></div>
+      <p id="channel-empty" class="mt-5 text-sm font-semibold text-bread-muted">Select a server to load its available channels.</p>
+    </section>
+
+    <div class="mt-6 flex flex-col gap-3 rounded-[1.5rem] border border-black/10 bg-white/95 p-6 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+      <p id="selection-status" class="text-sm text-bread-muted">Choose at least one channel to continue.</p>
+      <button id="continue-button" type="button" disabled class="rounded-2xl bg-bread-ink px-6 py-4 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50">Continue to Embed Builder</button>
+    </div>
+  </div>
+</section>
+<script>
+const selectedGuildIds = new Set();
+const selectedChannelIds = new Set();
+const guilds = new Map();
+const channelsByGuild = new Map();
+const guildList = document.getElementById('guild-list');
+const channelList = document.getElementById('channel-list');
+const channelEmpty = document.getElementById('channel-empty');
+const count = document.getElementById('selection-count');
+const continueButton = document.getElementById('continue-button');
+
+const keyFor = (guildId, channelId) => `${guildId}:${channelId}`;
+const destinations = () => [...selectedChannelIds].map((key) => {
+  const [guild_id, channel_id] = key.split(':');
+  return { guild_id, channel_id };
+});
+
+function updateSummary() {
+  count.textContent = `Servers Selected: ${selectedGuildIds.size} · Channels Selected: ${selectedChannelIds.size}`;
+  continueButton.disabled = selectedChannelIds.size === 0;
+  document.getElementById('selection-status').textContent = selectedChannelIds.size
+    ? `${selectedChannelIds.size} channel${selectedChannelIds.size === 1 ? '' : 's'} will receive the same embed.`
+    : 'Choose at least one channel to continue.';
+}
+
+async function loadChannels(guildId) {
+  if (channelsByGuild.has(guildId)) return;
+  try {
+    const response = await fetch(`/api/guilds/${guildId}/channels`);
+    const data = await response.json();
+    channelsByGuild.set(guildId, response.ok && data.success ? data.channels || [] : []);
+  } catch (_) { channelsByGuild.set(guildId, []); }
+}
+
+function render() {
+  guildList.replaceChildren();
+  guilds.forEach((guild) => {
+    const label = document.createElement('label');
+    label.className = 'flex cursor-pointer items-center gap-3 rounded-2xl border border-black/10 bg-bread-background px-4 py-3 text-sm font-semibold text-bread-ink';
+    const input = document.createElement('input'); input.type = 'checkbox'; input.checked = selectedGuildIds.has(guild.id);
+    input.addEventListener('change', async () => {
+      if (input.checked) { selectedGuildIds.add(guild.id); await loadChannels(guild.id); }
+      else { selectedGuildIds.delete(guild.id); [...selectedChannelIds].filter((key) => key.startsWith(`${guild.id}:`)).forEach((key) => selectedChannelIds.delete(key)); }
+      render();
+    });
+    label.append(input, document.createTextNode(guild.name)); guildList.append(label);
+  });
+  document.getElementById('guild-empty').classList.toggle('hidden', guilds.size > 0);
+
+  channelList.replaceChildren();
+  selectedGuildIds.forEach((guildId) => {
+    const channels = channelsByGuild.get(guildId); if (!channels) return;
+    const group = document.createElement('div'); group.className = 'rounded-2xl border border-black/10 bg-bread-background p-4';
+    const header = document.createElement('div'); header.className = 'flex items-center justify-between gap-3';
+    const title = document.createElement('h3'); title.className = 'font-semibold text-bread-ink'; title.textContent = guilds.get(guildId).name;
+    const allSelected = channels.length > 0 && channels.every((channel) => selectedChannelIds.has(keyFor(guildId, channel.id)));
+    const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'text-xs font-bold text-bread-gold'; toggle.textContent = allSelected ? 'Deselect all' : 'Select all';
+    toggle.addEventListener('click', () => { channels.forEach((channel) => allSelected ? selectedChannelIds.delete(keyFor(guildId, channel.id)) : selectedChannelIds.add(keyFor(guildId, channel.id))); render(); });
+    header.append(title, toggle); group.append(header);
+    if (!channels.length) { const message = document.createElement('p'); message.className = 'mt-3 text-sm text-bread-muted'; message.textContent = 'No usable text channels are available.'; group.append(message); }
+    channels.forEach((channel) => {
+      const label = document.createElement('label'); label.className = 'mt-3 flex cursor-pointer items-center gap-3 text-sm text-bread-ink';
+      const input = document.createElement('input'); input.type = 'checkbox'; input.checked = selectedChannelIds.has(keyFor(guildId, channel.id));
+      input.addEventListener('change', () => { input.checked ? selectedChannelIds.add(keyFor(guildId, channel.id)) : selectedChannelIds.delete(keyFor(guildId, channel.id)); updateSummary(); });
+      label.append(input, document.createTextNode(`#${channel.name}`)); group.append(label);
+    });
+    channelList.append(group);
+  });
+  channelEmpty.classList.toggle('hidden', selectedGuildIds.size > 0);
+  updateSummary();
+}
+
+document.getElementById('select-all-guilds').addEventListener('click', async () => { guilds.forEach((guild) => selectedGuildIds.add(guild.id)); await Promise.all([...selectedGuildIds].map(loadChannels)); render(); });
+document.getElementById('clear-selection').addEventListener('click', () => { selectedGuildIds.clear(); selectedChannelIds.clear(); render(); });
+continueButton.addEventListener('click', () => {
+  const selected = destinations();
+  if (!selected.length) return;
+  sessionStorage.setItem('dailybread.embedDestinations', JSON.stringify(selected));
+  window.location.assign(`/dashboard/guild/${selected[0].guild_id}/builder`);
+});
+
+(async () => {
+  try {
+    const response = await fetch('/api/guilds'); const data = await response.json();
+    (response.ok && data.success ? data.guilds || [] : []).filter((guild) => guild.has_bot).forEach((guild) => guilds.set(String(guild.guild_id || guild.id), { id: String(guild.guild_id || guild.id), name: guild.name || 'Unnamed server' }));
+  } finally { render(); }
+})();
+</script>
+{% endblock %}
