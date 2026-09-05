@@ -1,11 +1,12 @@
 from typing import Any
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, File, Request, UploadFile, status
 from fastapi.responses import JSONResponse
 
 from backend.auth import build_guild_icon_url, get_session, fetch_discord_guilds, fetch_discord_user
 from backend.services import bible_service, discord_service, database_service
 from backend.services.container_service import normalize_container_payload
+from backend.services.media_service import save_uploaded_media, validate_image_upload
 from backend.services.webhook_sender import send_webhook
 
 api_router = APIRouter()
@@ -351,6 +352,38 @@ async def create_embed(request: Request):
         "success": True,
         "embed": embed_record,
         "embed_id": str(embed_record.get("id")),
+    }
+
+
+@api_router.post("/media/upload")
+async def upload_media(request: Request, file: UploadFile = File(...)):
+    try:
+        _require_session(request)
+    except ValueError as exc:
+        return _error(str(exc), status.HTTP_401_UNAUTHORIZED)
+
+    if file is None or not getattr(file, "filename", None):
+        return _error("No file selected.", status.HTTP_400_BAD_REQUEST)
+
+    try:
+        file_bytes = await file.read()
+        validate_image_upload(file_bytes, file.filename)
+        saved = save_uploaded_media(file_bytes, file.filename, request)
+    except ValueError as exc:
+        return _error(str(exc), status.HTTP_400_BAD_REQUEST)
+    except Exception as exc:  # pragma: no cover - defensive failure path
+        import logging
+        logging.getLogger(__name__).exception("Media upload failed")
+        return _error("Unable to store the uploaded image. Please try again.", status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    return {
+        "success": True,
+        "url": saved["url"],
+        "filename": saved["filename"],
+        "size": saved["size"],
+        "width": saved["width"],
+        "height": saved["height"],
+        "format": saved["format"],
     }
 
 

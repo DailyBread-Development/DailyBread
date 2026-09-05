@@ -31,6 +31,7 @@ from backend.auth import (
 from backend.config import DOCS_DIR, STATIC_DIR, TEMPLATES_DIR
 from backend.routes import router as routes_router
 from backend.services import discord_service, database_service
+from backend.services.media_service import get_media_storage_dir
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -40,6 +41,8 @@ DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", os.getenv("discord_client_id"
 
 app = FastAPI(title="DailyBread", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+media_dir = get_media_storage_dir()
+app.mount("/media", StaticFiles(directory=str(media_dir), html=False), name="media")
 app.include_router(routes_router)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 

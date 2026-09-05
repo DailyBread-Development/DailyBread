@@ -14,7 +14,7 @@
             <h1 class="mt-3 font-serif text-3xl font-bold text-bread-ink ">Create scripture message for {{ guild.name }}</h1>
             <p class="mt-3 max-w-2xl text-sm leading-6 text-black/65">Choose destinations, then search verses and customize an embed to send to them.</p>
           </div>
-          <a href="/dashboard/builder/mass-selection" class="inline-flex min-h-11 items-center justify-center rounded-2xl bg-bread-ink px-5 text-sm font-semibold text-white transition hover:bg-black">Choose destinations</a>
+          <a href="/dashboard/builder/mass-selection" class="inline-flex min-h-11 items-center justify-center rounded-2xl bg-bread-ink px-5 text-sm font-semibold text-white transition hover:bg-black">Mass Selection</a>
         </div>
       </section>
     </div>
@@ -110,6 +110,30 @@
             <div>
               <label class="block text-sm font-semibold text-bread-ink">Embed Image URL</label>
               <input id="embed-image-url" type="url" placeholder="https://example.com/image.png" class="mt-3 w-full rounded-2xl border border-black/10 bg-bread-cream px-4 py-4 text-base text-bread-ink outline-none transition focus:border-bread-gold focus:ring-4 focus:ring-bread-gold/15" />
+            </div>
+
+            <div>
+              <label class="block text-sm font-semibold text-bread-ink">Image Upload</label>
+              <div id="image-upload-dropzone" class="mt-3 flex cursor-pointer flex-col items-center justify-center rounded-[1.5rem] border-2 border-dashed border-black/15 bg-bread-cream/70 px-5 py-7 text-center transition hover:border-bread-gold hover:bg-bread-cream">
+                <input id="image-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" />
+                <div id="image-upload-empty" class="space-y-3">
+                  <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-white text-2xl">🖼️</div>
+                  <p class="text-sm font-medium text-black/75">Drag & drop an image here</p>
+                  <button type="button" id="image-choose-button" class="rounded-full bg-bread-ink px-4 py-2 text-sm font-semibold text-white">Choose Image</button>
+                </div>
+                <div id="image-upload-preview" class="hidden w-full">
+                  <img id="uploaded-image-preview" src="" alt="Uploaded preview" class="mx-auto max-h-40 w-full rounded-2xl object-cover" />
+                  <div class="mt-3 flex items-center justify-between gap-3 text-sm">
+                    <span id="uploaded-image-name" class="truncate font-medium text-bread-ink"></span>
+                    <span id="uploaded-image-size" class="text-black/55"></span>
+                  </div>
+                  <div class="mt-4 flex justify-center gap-3">
+                    <button type="button" id="image-replace-button" class="rounded-full border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-bread-ink">Replace</button>
+                    <button type="button" id="image-remove-button" class="rounded-full border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">Remove</button>
+                  </div>
+                </div>
+              </div>
+              <div id="image-upload-status" class="mt-2 min-h-[1.5rem] text-sm text-black/70"></div>
             </div>
 
             <div class="grid gap-4 sm:grid-cols-2">
@@ -244,6 +268,17 @@ const embedDescription = getEl('#embed-description');
 const embedColor = getEl('#embed-color');
 const embedFooter = getEl('#embed-footer');
 const embedImageUrl = getEl('#embed-image-url');
+const imageFileInput = getEl('#image-file-input');
+const imageUploadDropzone = getEl('#image-upload-dropzone');
+const imageUploadPreview = getEl('#image-upload-preview');
+const imageUploadEmpty = getEl('#image-upload-empty');
+const uploadedImagePreview = getEl('#uploaded-image-preview');
+const uploadedImageName = getEl('#uploaded-image-name');
+const uploadedImageSize = getEl('#uploaded-image-size');
+const imageUploadStatus = getEl('#image-upload-status');
+const imageChooseButton = getEl('#image-choose-button');
+const imageReplaceButton = getEl('#image-replace-button');
+const imageRemoveButton = getEl('#image-remove-button');
 const embedThumbnailUrl = getEl('#embed-thumbnail-url');
 const embedAuthor = getEl('#embed-author');
 const embedVerseReference = getEl('#embed-verse-reference');
@@ -384,6 +419,70 @@ function updateDraft() {
   state.draft.author = embedAuthor.value.trim();
   state.draft.verse_reference = embedVerseReference.value;
   renderPreview();
+  if (state.draft.image_url) {
+    imageUploadStatus.textContent = 'Using uploaded or custom image URL.';
+  }
+}
+
+function setImageUploadPreview(url, name = '', size = '') {
+  if (!url) {
+    imageUploadPreview.classList.add('hidden');
+    imageUploadEmpty.classList.remove('hidden');
+    imageUploadStatus.textContent = '';
+    return;
+  }
+  imageUploadPreview.classList.remove('hidden');
+  imageUploadEmpty.classList.add('hidden');
+  uploadedImagePreview.src = url;
+  uploadedImageName.textContent = name || 'Uploaded image';
+  uploadedImageSize.textContent = size || '';
+}
+
+function clearUploadedImage() {
+  embedImageUrl.value = '';
+  imageFileInput.value = '';
+  state.draft.image_url = '';
+  setImageUploadPreview('', '', '');
+  renderPreview();
+}
+
+async function handleImageUpload(file) {
+  if (!file) return;
+
+  const allowedTypes = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+  if (!allowedTypes.includes(file.type) && !/\.(png|jpe?g|webp|gif)$/i.test(file.name)) {
+    imageUploadStatus.textContent = 'Unsupported image type. Use PNG, JPG, WebP, or GIF.';
+    imageUploadStatus.className = 'mt-2 min-h-[1.5rem] text-sm font-semibold text-rose-600';
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  imageUploadStatus.textContent = 'Uploading image...';
+  imageUploadStatus.className = 'mt-2 min-h-[1.5rem] text-sm text-black/70';
+
+  try {
+    const response = await fetch('/api/media/upload', {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success) {
+      throw new Error(data.error || 'Image upload failed.');
+    }
+
+    embedImageUrl.value = data.url;
+    state.draft.image_url = data.url;
+    setImageUploadPreview(data.url, file.name, `${Math.max(1, Math.round((data.size || file.size) / 1024))} KB`);
+    imageUploadStatus.textContent = 'Image uploaded successfully.';
+    imageUploadStatus.className = 'mt-2 min-h-[1.5rem] text-sm font-semibold text-emerald-700';
+    renderPreview();
+  } catch (error) {
+    console.error('Image upload failed:', error);
+    imageUploadStatus.textContent = error.message || 'Image upload failed. Please try again.';
+    imageUploadStatus.className = 'mt-2 min-h-[1.5rem] text-sm font-semibold text-rose-600';
+  }
 }
 
 function applyPreset(presetKey) {
@@ -558,6 +657,27 @@ verseSearchInput.addEventListener('keydown', (e) => e.key === 'Enter' && searchV
 useVerseButton.addEventListener('click', useVerse);
 [presetSelect, messageContent, embedTitle, embedDescription, embedColor, embedFooter, embedImageUrl, embedThumbnailUrl, embedAuthor].forEach((el) => el.addEventListener('input', updateDraft));
 presetSelect.addEventListener('change', (e) => applyPreset(e.target.value));
+imageChooseButton.addEventListener('click', () => imageFileInput.click());
+imageFileInput.addEventListener('change', (event) => {
+  const [file] = event.target.files || [];
+  if (file) handleImageUpload(file);
+});
+imageReplaceButton.addEventListener('click', () => imageFileInput.click());
+imageRemoveButton.addEventListener('click', () => clearUploadedImage());
+imageUploadDropzone.addEventListener('dragover', (event) => {
+  event.preventDefault();
+  imageUploadDropzone.classList.add('border-bread-gold', 'bg-bread-cream');
+});
+imageUploadDropzone.addEventListener('dragleave', () => {
+  imageUploadDropzone.classList.remove('border-bread-gold', 'bg-bread-cream');
+});
+imageUploadDropzone.addEventListener('drop', (event) => {
+  event.preventDefault();
+  imageUploadDropzone.classList.remove('border-bread-gold', 'bg-bread-cream');
+  const file = event.dataTransfer?.files?.[0];
+  if (file) handleImageUpload(file);
+});
+
 sendButton.addEventListener('click', async () => {
   if (activeMode === 'advanced') {
     if (window.DailyBreadAdvancedBuilder?.sendContainer) {

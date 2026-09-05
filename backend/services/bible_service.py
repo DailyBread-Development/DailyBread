@@ -96,8 +96,6 @@ def _parse_translation_token(token: str) -> Optional[Dict[str, str]]:
     label = raw_token.upper()
     env_name = f"{raw_token.lower()}_bible_id"
     translation_id = os.getenv(env_name)
-    print("Looking for:", env_name)
-    print("Found:", os.getenv(env_name))
     if translation_id:
         return {"label": label, "translation_id": translation_id}
     return None
@@ -124,17 +122,14 @@ def _parse_reference_query(query: str) -> Dict[str, Any]:
         translation_labels: List[str] = []
 
         for token in prefix.split("/"):
-            # Only parse as translation if an environment variable exists.
-            env_name = f"{token.lower()}_bible_id"
-            translation_id = os.getenv(env_name)
-
-            if not translation_id:
+            parsed_token = _parse_translation_token(token)
+            if not parsed_token:
                 translation_ids = []
                 translation_labels = []
                 break
 
-            translation_ids.append(translation_id)
-            translation_labels.append(token.upper())
+            translation_ids.append(parsed_token["translation_id"])
+            translation_labels.append(parsed_token["label"])
 
         if translation_ids:
             return {

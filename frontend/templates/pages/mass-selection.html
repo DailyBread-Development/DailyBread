@@ -2,128 +2,541 @@
 
 {% block content %}
 <section class="min-h-[calc(100vh-6rem)] bg-bread-background py-8">
-  <div class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
-    <a href="/dashboard/builder" class="text-sm font-semibold text-bread-gold transition hover:text-bread-ink">Back to Embed Builder</a>
-    <div class="mt-4 rounded-[1.5rem] border border-bread-border bg-bread-surface p-6 shadow-soft sm:p-8">
-      <p class="text-sm font-extrabold uppercase tracking-[0.18em] text-bread-muted">Mass Selection</p>
-      <h1 class="mt-3 font-serif text-3xl font-bold text-bread-ink">Choose embed destinations.</h1>
-      <p class="mt-3 text-sm leading-6 text-bread-muted">Select servers, then the text channels that should receive one shared embed.</p>
+  <div class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
+    <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <a href="/dashboard/builder" class="text-sm font-semibold text-bread-gold transition hover:text-bread-ink">Back to Embed Builder</a>
+      <button id="cancel-mass-selection" type="button" class="rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-bread-ink">Cancel</button>
     </div>
 
-    <section class="mt-6 rounded-[1.5rem] border border-black/10 bg-white/95 p-6 shadow-sm">
-      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div class="rounded-[2rem] border border-bread-border bg-bread-surface p-6 shadow-soft sm:p-8">
+      <p class="text-sm font-extrabold uppercase tracking-[0.18em] text-bread-muted">Mass Selection</p>
+      <h1 class="mt-3 font-serif text-3xl font-bold text-bread-ink">Choose channels for one guild at a time</h1>
+      <p class="mt-3 max-w-3xl text-sm leading-6 text-bread-muted">Build one shared embed, then send it to multiple Discord channels across any number of guilds.</p>
+
+      <div class="mt-6 flex flex-wrap gap-3">
+        <div class="step-pill step-pill-active">1. Server</div>
+        <div class="step-pill">2. Channels</div>
+        <div class="step-pill">3. Review</div>
+      </div>
+    </div>
+
+    <div class="mt-6 grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+      <section id="guild-step" class="rounded-[2rem] border border-black/10 bg-white/95 p-6 shadow-sm">
+        <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 class="font-serif text-2xl font-bold text-bread-ink">Choose a server</h2>
+            <p class="mt-2 text-sm text-bread-muted">Select a guild to configure its channels.</p>
+          </div>
+        </div>
+        <div id="guild-grid" class="grid gap-4 md:grid-cols-2"></div>
+        <p id="guild-empty" class="mt-4 hidden text-sm font-semibold text-bread-muted">No DailyBread servers are available.</p>
+        <div class="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div id="guild-step-status" class="text-sm text-bread-muted">No destinations selected yet.</div>
+          <button id="review-selection-button" type="button" class="hidden rounded-2xl bg-bread-ink px-5 py-3 text-sm font-semibold text-white">Review selection</button>
+        </div>
+      </section>
+
+      <aside class="rounded-[2rem] border border-black/10 bg-white/95 p-6 shadow-sm">
+        <h2 class="font-serif text-2xl font-bold text-bread-ink">Selected destinations</h2>
+        <div id="selection-summary" class="mt-5 space-y-4"></div>
+      </aside>
+    </div>
+
+    <section id="channel-step" class="mt-6 hidden rounded-[2rem] border border-black/10 bg-white/95 p-6 shadow-sm">
+      <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 class="font-serif text-2xl font-bold text-bread-ink">Servers</h2>
-          <p id="selection-count" class="mt-2 text-sm font-semibold text-bread-sage">Servers Selected: 0 · Channels Selected: 0</p>
+          <p id="channel-step-label" class="text-xs font-extrabold uppercase tracking-[0.18em] text-bread-sage">Guild</p>
+          <h2 id="channel-guild-name" class="mt-2 font-serif text-2xl font-bold text-bread-ink">Channels</h2>
         </div>
         <div class="flex gap-2">
-          <button id="select-all-guilds" type="button" class="rounded-xl border border-bread-border bg-bread-background px-3 py-2 text-xs font-bold text-bread-ink">Select all</button>
-          <button id="clear-selection" type="button" class="rounded-xl border border-bread-border bg-bread-background px-3 py-2 text-xs font-bold text-bread-ink">Clear</button>
+          <button id="toggle-all-channels" type="button" class="rounded-xl border border-bread-border bg-bread-background px-3 py-2 text-xs font-bold text-bread-ink">Select all</button>
+          <button id="deselect-all-channels" type="button" class="rounded-xl border border-bread-border bg-bread-background px-3 py-2 text-xs font-bold text-bread-ink">Deselect all</button>
         </div>
       </div>
-      <div id="guild-list" class="mt-5 grid gap-3 sm:grid-cols-2"></div>
-      <p id="guild-empty" class="mt-5 hidden text-sm font-semibold text-bread-muted">No DailyBread servers are available.</p>
+
+      <div id="channel-list" class="mt-6 space-y-3"></div>
+
+      <div class="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <button id="channel-back-button" type="button" class="rounded-2xl border border-bread-border bg-bread-background px-5 py-3 text-sm font-semibold text-bread-ink">Back</button>
+        <button id="channel-continue-button" type="button" class="rounded-2xl bg-bread-ink px-6 py-3 text-sm font-semibold text-white">Continue</button>
+      </div>
     </section>
 
-    <section class="mt-6 rounded-[1.5rem] border border-black/10 bg-white/95 p-6 shadow-sm">
-      <h2 class="font-serif text-2xl font-bold text-bread-ink">Channels</h2>
-      <p class="mt-2 text-sm text-bread-muted">Channels remain grouped beneath their server.</p>
-      <div id="channel-list" class="mt-5 space-y-4"></div>
-      <p id="channel-empty" class="mt-5 text-sm font-semibold text-bread-muted">Select a server to load its available channels.</p>
-    </section>
+    <section id="review-step" class="mt-6 hidden rounded-[2rem] border border-black/10 bg-white/95 p-6 shadow-sm">
+      <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 class="font-serif text-2xl font-bold text-bread-ink">Review destinations</h2>
+          <p class="mt-2 text-sm text-bread-muted">Check each guild and channel before continuing to the embed builder.</p>
+        </div>
+        <div class="rounded-full bg-bread-background px-4 py-2 text-sm font-semibold text-bread-ink">
+          <span id="total-destination-count">0</span> channels selected
+        </div>
+      </div>
 
-    <div class="mt-6 flex flex-col gap-3 rounded-[1.5rem] border border-black/10 bg-white/95 p-6 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-      <p id="selection-status" class="text-sm text-bread-muted">Choose at least one channel to continue.</p>
-      <button id="continue-button" type="button" disabled class="rounded-2xl bg-bread-ink px-6 py-4 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50">Continue to Embed Builder</button>
-    </div>
+      <div id="review-list" class="mt-6 space-y-4"></div>
+
+      <div class="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <button id="review-back-button" type="button" class="rounded-2xl border border-bread-border bg-bread-background px-5 py-3 text-sm font-semibold text-bread-ink">Back</button>
+        <button id="review-continue-button" type="button" class="rounded-2xl bg-bread-ink px-6 py-3 text-sm font-semibold text-white">Continue to Embed Builder</button>
+      </div>
+    </section>
   </div>
 </section>
+
 <script>
-const selectedGuildIds = new Set();
-const selectedChannelIds = new Set();
-const guilds = new Map();
-const channelsByGuild = new Map();
-const guildList = document.getElementById('guild-list');
+const state = {
+  view: 'guild',
+  guilds: new Map(),
+  channelsByGuild: new Map(),
+  selectedGuildOrder: [],
+  selectionsByGuild: {},
+  currentGuildId: null,
+};
+
+const guildGrid = document.getElementById('guild-grid');
+const guildEmpty = document.getElementById('guild-empty');
+const selectionSummary = document.getElementById('selection-summary');
+const channelStep = document.getElementById('channel-step');
+const reviewStep = document.getElementById('review-step');
+const guildStep = document.getElementById('guild-step');
 const channelList = document.getElementById('channel-list');
-const channelEmpty = document.getElementById('channel-empty');
-const count = document.getElementById('selection-count');
-const continueButton = document.getElementById('continue-button');
+const channelGuildName = document.getElementById('channel-guild-name');
+const totalDestinationCount = document.getElementById('total-destination-count');
+const reviewList = document.getElementById('review-list');
+const channelContinueButton = document.getElementById('channel-continue-button');
+const toggleAllChannelsButton = document.getElementById('toggle-all-channels');
+const deselectAllChannelsButton = document.getElementById('deselect-all-channels');
+const reviewSelectionButton = document.getElementById('review-selection-button');
+const guildStepStatus = document.getElementById('guild-step-status');
 
-const keyFor = (guildId, channelId) => `${guildId}:${channelId}`;
-const destinations = () => [...selectedChannelIds].map((key) => {
-  const [guild_id, channel_id] = key.split(':');
-  return { guild_id, channel_id };
-});
+function getSelectedCount() {
+  return Object.values(state.selectionsByGuild).reduce((total, channelIds) => total + (Array.isArray(channelIds) ? channelIds.length : 0), 0);
+}
 
-function updateSummary() {
-  count.textContent = `Servers Selected: ${selectedGuildIds.size} · Channels Selected: ${selectedChannelIds.size}`;
-  continueButton.disabled = selectedChannelIds.size === 0;
-  document.getElementById('selection-status').textContent = selectedChannelIds.size
-    ? `${selectedChannelIds.size} channel${selectedChannelIds.size === 1 ? '' : 's'} will receive the same embed.`
-    : 'Choose at least one channel to continue.';
+function getSelectedChannelIdsForGuild(guildId) {
+  return Array.isArray(state.selectionsByGuild[guildId]) ? state.selectionsByGuild[guildId] : [];
+}
+
+function renderSelectionSummary() {
+  const total = getSelectedCount();
+  selectionSummary.replaceChildren();
+  guildStepStatus.textContent = total
+    ? `${total} channel${total === 1 ? '' : 's'} selected across ${state.selectedGuildOrder.length} server${state.selectedGuildOrder.length === 1 ? '' : 's'}.`
+    : 'No destinations selected yet.';
+  reviewSelectionButton.classList.toggle('hidden', total === 0);
+
+  if (!total) {
+    const empty = document.createElement('p');
+    empty.className = 'text-sm text-bread-muted';
+    empty.textContent = 'No servers or channels selected yet.';
+    selectionSummary.append(empty);
+    return;
+  }
+
+  state.selectedGuildOrder.forEach((guildId) => {
+    const guild = state.guilds.get(guildId);
+    const selected = getSelectedChannelIdsForGuild(guildId);
+    if (!guild || !selected.length) return;
+
+    const card = document.createElement('div');
+    card.className = 'rounded-2xl border border-black/10 bg-bread-background p-4';
+
+    const heading = document.createElement('div');
+    heading.className = 'flex items-center justify-between gap-3';
+    const title = document.createElement('h3');
+    title.className = 'font-semibold text-bread-ink';
+    title.textContent = guild.name;
+    const badge = document.createElement('span');
+    badge.className = 'rounded-full bg-white px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-bread-sage';
+    badge.textContent = `${selected.length} channels`;
+    heading.append(title, badge);
+
+    const list = document.createElement('ul');
+    list.className = 'mt-3 space-y-2 text-sm text-bread-muted';
+    const channelNames = state.channelsByGuild.get(guildId) || [];
+    selected.forEach((channelId) => {
+      const match = channelNames.find((channel) => String(channel.id) === String(channelId));
+      const item = document.createElement('li');
+      item.textContent = match ? `#${match.name}` : `Channel ${channelId}`;
+      item.className = 'rounded-lg bg-white px-2 py-1';
+      list.append(item);
+    });
+
+    card.append(heading, list);
+    selectionSummary.append(card);
+  });
+}
+
+function updateStepIndicators() {
+  document.querySelectorAll('.step-pill').forEach((pill, index) => {
+    const active = index === (state.view === 'guild' ? 0 : state.view === 'channel' ? 1 : 2);
+    pill.classList.toggle('step-pill-active', active);
+    pill.classList.toggle('opacity-60', !active);
+  });
+}
+
+function setView(view) {
+  state.view = view;
+  guildStep.classList.toggle('hidden', view !== 'guild');
+  channelStep.classList.toggle('hidden', view !== 'channel');
+  reviewStep.classList.toggle('hidden', view !== 'review');
+  updateStepIndicators();
+}
+
+async function loadGuilds() {
+  try {
+    const response = await fetch('/api/guilds');
+    const data = await response.json();
+    const guildList = response.ok && data.success ? (data.guilds || []) : [];
+    state.guilds.clear();
+    guildList.filter((guild) => guild.has_bot).forEach((guild) => {
+      const guildId = String(guild.guild_id || guild.id);
+      state.guilds.set(guildId, { id: guildId, name: guild.name || 'Unnamed server' });
+    });
+    renderGuilds();
+  } catch (error) {
+    console.warn('Unable to load guilds for mass selection.', error);
+    state.guilds.clear();
+    renderGuilds();
+  }
 }
 
 async function loadChannels(guildId) {
-  if (channelsByGuild.has(guildId)) return;
+  if (state.channelsByGuild.has(guildId)) return;
   try {
     const response = await fetch(`/api/guilds/${guildId}/channels`);
     const data = await response.json();
-    channelsByGuild.set(guildId, response.ok && data.success ? data.channels || [] : []);
-  } catch (_) { channelsByGuild.set(guildId, []); }
+    if (response.ok && data.success) {
+      state.channelsByGuild.set(guildId, data.channels || []);
+      return;
+    }
+  } catch (error) {
+    console.warn(`Unable to load channels for guild ${guildId}`, error);
+  }
+  state.channelsByGuild.set(guildId, []);
 }
 
-function render() {
-  guildList.replaceChildren();
-  guilds.forEach((guild) => {
-    const label = document.createElement('label');
-    label.className = 'flex cursor-pointer items-center gap-3 rounded-2xl border border-black/10 bg-bread-background px-4 py-3 text-sm font-semibold text-bread-ink';
-    const input = document.createElement('input'); input.type = 'checkbox'; input.checked = selectedGuildIds.has(guild.id);
-    input.addEventListener('change', async () => {
-      if (input.checked) { selectedGuildIds.add(guild.id); await loadChannels(guild.id); }
-      else { selectedGuildIds.delete(guild.id); [...selectedChannelIds].filter((key) => key.startsWith(`${guild.id}:`)).forEach((key) => selectedChannelIds.delete(key)); }
-      render();
-    });
-    label.append(input, document.createTextNode(guild.name)); guildList.append(label);
-  });
-  document.getElementById('guild-empty').classList.toggle('hidden', guilds.size > 0);
+function renderGuilds() {
+  guildGrid.replaceChildren();
+  if (!state.guilds.size) {
+    guildEmpty.classList.remove('hidden');
+    return;
+  }
+  guildEmpty.classList.add('hidden');
 
+  [...state.guilds.values()].forEach((guild) => {
+    const card = document.createElement('article');
+    card.className = 'rounded-[1.5rem] border border-black/10 bg-bread-background p-5 transition hover:border-bread-gold/50 hover:shadow-md';
+
+    const titleRow = document.createElement('div');
+    titleRow.className = 'flex items-center justify-between gap-3';
+    const title = document.createElement('h3');
+    title.className = 'font-semibold text-bread-ink';
+    title.textContent = guild.name;
+    const configured = Boolean(state.selectionsByGuild[guild.id]?.length);
+    const configuredBadge = document.createElement('span');
+    configuredBadge.className = `rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] ${configured ? 'bg-emerald-100 text-emerald-700' : 'bg-white text-bread-sage'}`;
+    configuredBadge.textContent = configured ? 'Configured' : 'Ready';
+    titleRow.append(title, configuredBadge);
+
+    const meta = document.createElement('p');
+    meta.className = 'mt-3 text-sm text-bread-muted';
+    meta.textContent = configured
+      ? `${state.selectionsByGuild[guild.id].length} channel${state.selectionsByGuild[guild.id].length === 1 ? '' : 's'} selected`
+      : 'Select channels for this server';
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-2xl border border-bread-border bg-white px-4 text-sm font-semibold text-bread-ink hover:bg-bread-hover';
+    button.textContent = configured ? 'Edit this server' : 'Select this server';
+    button.addEventListener('click', async () => {
+      state.currentGuildId = guild.id;
+      await loadChannels(guild.id);
+      setChannelView(guild.id);
+    });
+
+    card.append(titleRow, meta, button);
+    guildGrid.append(card);
+  });
+}
+
+function flattenSelections() {
+  const destinations = [];
+  state.selectedGuildOrder.forEach((guildId) => {
+    const channelIds = state.selectionsByGuild[guildId] || [];
+    channelIds.forEach((channelId) => {
+      if (!channelId) return;
+      destinations.push({ guild_id: guildId, channel_id: String(channelId) });
+    });
+  });
+  return destinations;
+}
+
+function renderReview() {
+  reviewList.replaceChildren();
+  const total = getSelectedCount();
+  totalDestinationCount.textContent = String(total);
+
+  if (!total) {
+    const empty = document.createElement('div');
+    empty.className = 'rounded-2xl border border-dashed border-bread-border bg-bread-background p-5 text-sm text-bread-muted';
+    empty.textContent = 'No destinations selected yet.';
+    reviewList.append(empty);
+    return;
+  }
+
+  state.selectedGuildOrder.forEach((guildId) => {
+    const guild = state.guilds.get(guildId);
+    const selectedIds = getSelectedChannelIdsForGuild(guildId);
+    const channels = state.channelsByGuild.get(guildId) || [];
+    if (!guild || !selectedIds.length) return;
+
+    const block = document.createElement('div');
+    block.className = 'rounded-[1.5rem] border border-black/10 bg-bread-background p-4';
+
+    const header = document.createElement('div');
+    header.className = 'flex items-center justify-between gap-3';
+    const title = document.createElement('h3');
+    title.className = 'font-semibold text-bread-ink';
+    title.textContent = guild.name;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'text-sm font-semibold text-red-600';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => {
+      delete state.selectionsByGuild[guildId];
+      state.selectedGuildOrder = state.selectedGuildOrder.filter((id) => id !== guildId);
+      renderSelectionSummary();
+      renderReview();
+      renderGuilds();
+      if (!state.selectedGuildOrder.length) setView('guild');
+    });
+    header.append(title, remove);
+
+    const list = document.createElement('ul');
+    list.className = 'mt-3 space-y-2 text-sm text-bread-muted';
+    selectedIds.forEach((channelId) => {
+      const match = channels.find((channel) => String(channel.id) === String(channelId));
+      const item = document.createElement('li');
+      item.className = 'flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2';
+      const name = document.createElement('span');
+      name.textContent = match ? `#${match.name}` : `Channel ${channelId}`;
+      const removeChannel = document.createElement('button');
+      removeChannel.type = 'button';
+      removeChannel.className = 'text-xs font-semibold text-red-600';
+      removeChannel.textContent = 'Remove';
+      removeChannel.addEventListener('click', () => {
+        state.selectionsByGuild[guildId] = (state.selectionsByGuild[guildId] || []).filter((id) => String(id) !== String(channelId));
+        if (!state.selectionsByGuild[guildId].length) {
+          delete state.selectionsByGuild[guildId];
+          state.selectedGuildOrder = state.selectedGuildOrder.filter((id) => id !== guildId);
+        }
+        renderSelectionSummary();
+        renderReview();
+        renderGuilds();
+      });
+      item.append(name, removeChannel);
+      list.append(item);
+    });
+
+    block.append(header, list);
+    reviewList.append(block);
+  });
+}
+
+function setChannelView(guildId) {
+  const guild = state.guilds.get(guildId);
+  state.currentGuildId = guildId;
+  channelGuildName.textContent = guild ? guild.name : 'Channels';
+  const selected = getSelectedChannelIdsForGuild(guildId);
   channelList.replaceChildren();
-  selectedGuildIds.forEach((guildId) => {
-    const channels = channelsByGuild.get(guildId); if (!channels) return;
-    const group = document.createElement('div'); group.className = 'rounded-2xl border border-black/10 bg-bread-background p-4';
-    const header = document.createElement('div'); header.className = 'flex items-center justify-between gap-3';
-    const title = document.createElement('h3'); title.className = 'font-semibold text-bread-ink'; title.textContent = guilds.get(guildId).name;
-    const allSelected = channels.length > 0 && channels.every((channel) => selectedChannelIds.has(keyFor(guildId, channel.id)));
-    const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'text-xs font-bold text-bread-gold'; toggle.textContent = allSelected ? 'Deselect all' : 'Select all';
-    toggle.addEventListener('click', () => { channels.forEach((channel) => allSelected ? selectedChannelIds.delete(keyFor(guildId, channel.id)) : selectedChannelIds.add(keyFor(guildId, channel.id))); render(); });
-    header.append(title, toggle); group.append(header);
-    if (!channels.length) { const message = document.createElement('p'); message.className = 'mt-3 text-sm text-bread-muted'; message.textContent = 'No usable text channels are available.'; group.append(message); }
-    channels.forEach((channel) => {
-      const label = document.createElement('label'); label.className = 'mt-3 flex cursor-pointer items-center gap-3 text-sm text-bread-ink';
-      const input = document.createElement('input'); input.type = 'checkbox'; input.checked = selectedChannelIds.has(keyFor(guildId, channel.id));
-      input.addEventListener('change', () => { input.checked ? selectedChannelIds.add(keyFor(guildId, channel.id)) : selectedChannelIds.delete(keyFor(guildId, channel.id)); updateSummary(); });
-      label.append(input, document.createTextNode(`#${channel.name}`)); group.append(label);
+
+  const channels = state.channelsByGuild.get(guildId) || [];
+  if (!channels.length) {
+    const empty = document.createElement('p');
+    empty.className = 'text-sm text-bread-muted';
+    empty.textContent = 'No text channels are available for this guild.';
+    channelList.append(empty);
+    channelContinueButton.disabled = true;
+    setView('channel');
+    return;
+  }
+
+  const selectedSet = new Set(selected);
+  channels.forEach((channel) => {
+    const row = document.createElement('label');
+    row.className = 'flex cursor-pointer items-center justify-between gap-3 rounded-2xl border border-black/10 bg-bread-background px-4 py-3';
+    const label = document.createElement('span');
+    label.className = 'font-medium text-bread-ink';
+    label.textContent = `#${channel.name}`;
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = selectedSet.has(String(channel.id));
+    checkbox.dataset.channelId = String(channel.id);
+    checkbox.addEventListener('change', () => {
+      const current = getSelectedChannelIdsForGuild(guildId);
+      const next = checkbox.checked
+        ? [...new Set([...current, String(channel.id)])]
+        : current.filter((id) => String(id) !== String(channel.id));
+      if (next.length) {
+        state.selectionsByGuild[guildId] = next;
+        if (!state.selectedGuildOrder.includes(guildId)) state.selectedGuildOrder.push(guildId);
+      } else {
+        delete state.selectionsByGuild[guildId];
+        state.selectedGuildOrder = state.selectedGuildOrder.filter((id) => id !== guildId);
+      }
+      renderSelectionSummary();
+      renderReview();
+      renderGuilds();
+      const refreshed = getSelectedChannelIdsForGuild(guildId);
+      channelContinueButton.disabled = !refreshed.length;
+      const refreshedAll = channels.length > 0 && channels.every((item) => refreshed.includes(String(item.id)));
+      toggleAllChannelsButton.textContent = refreshedAll ? 'Deselect all' : 'Select all';
     });
-    channelList.append(group);
+    row.append(label, checkbox);
+    channelList.append(row);
   });
-  channelEmpty.classList.toggle('hidden', selectedGuildIds.size > 0);
-  updateSummary();
+
+  const allChecked = channels.length > 0 && channels.every((channel) => selectedSet.has(String(channel.id)));
+  toggleAllChannelsButton.textContent = allChecked ? 'Deselect all' : 'Select all';
+  channelContinueButton.disabled = !selected.length;
+  setView('channel');
 }
 
-document.getElementById('select-all-guilds').addEventListener('click', async () => { guilds.forEach((guild) => selectedGuildIds.add(guild.id)); await Promise.all([...selectedGuildIds].map(loadChannels)); render(); });
-document.getElementById('clear-selection').addEventListener('click', () => { selectedGuildIds.clear(); selectedChannelIds.clear(); render(); });
-continueButton.addEventListener('click', () => {
-  const selected = destinations();
-  if (!selected.length) return;
-  sessionStorage.setItem('dailybread.embedDestinations', JSON.stringify(selected));
-  window.location.assign(`/dashboard/guild/${selected[0].guild_id}/builder`);
+function saveCurrentGuildSelection() {
+  if (!state.currentGuildId) return;
+  const selected = Array.from(channelList.querySelectorAll('input[type="checkbox"]:checked'));
+  const validIds = selected.map((input) => String(input.dataset.channelId)).filter(Boolean);
+  if (validIds.length) {
+    state.selectionsByGuild[state.currentGuildId] = [...new Set(validIds)];
+    if (!state.selectedGuildOrder.includes(state.currentGuildId)) state.selectedGuildOrder.push(state.currentGuildId);
+  } else {
+    delete state.selectionsByGuild[state.currentGuildId];
+    state.selectedGuildOrder = state.selectedGuildOrder.filter((id) => id !== state.currentGuildId);
+  }
+  renderSelectionSummary();
+  renderReview();
+  renderGuilds();
+}
+
+function completeGuildSelection() {
+  saveCurrentGuildSelection();
+  if (!state.selectedGuildOrder.length) {
+    setView('guild');
+    return;
+  }
+  const total = getSelectedCount();
+  if (total > 0) {
+    setView('review');
+  } else {
+    setView('guild');
+  }
+}
+
+document.getElementById('cancel-mass-selection').addEventListener('click', () => {
+  sessionStorage.removeItem('dailybread.embedDestinations');
+  window.location.assign('/dashboard/builder');
 });
 
-(async () => {
-  try {
-    const response = await fetch('/api/guilds'); const data = await response.json();
-    (response.ok && data.success ? data.guilds || [] : []).filter((guild) => guild.has_bot).forEach((guild) => guilds.set(String(guild.guild_id || guild.id), { id: String(guild.guild_id || guild.id), name: guild.name || 'Unnamed server' }));
-  } finally { render(); }
+document.getElementById('toggle-all-channels').addEventListener('click', () => {
+  const guildId = state.currentGuildId;
+  const channels = state.channelsByGuild.get(guildId) || [];
+  const current = getSelectedChannelIdsForGuild(guildId);
+  const selectedSet = new Set(current);
+  const shouldSelectAll = channels.some((channel) => !selectedSet.has(String(channel.id)));
+  const next = shouldSelectAll ? channels.map((channel) => String(channel.id)) : [];
+  state.selectionsByGuild[guildId] = next;
+  if (next.length) {
+    if (!state.selectedGuildOrder.includes(guildId)) state.selectedGuildOrder.push(guildId);
+  } else {
+    delete state.selectionsByGuild[guildId];
+    state.selectedGuildOrder = state.selectedGuildOrder.filter((id) => id !== guildId);
+  }
+  setChannelView(guildId);
+  renderSelectionSummary();
+  renderReview();
+  renderGuilds();
+});
+
+document.getElementById('deselect-all-channels').addEventListener('click', () => {
+  const guildId = state.currentGuildId;
+  if (!guildId) return;
+  delete state.selectionsByGuild[guildId];
+  state.selectedGuildOrder = state.selectedGuildOrder.filter((id) => id !== guildId);
+  setChannelView(guildId);
+  renderSelectionSummary();
+  renderReview();
+  renderGuilds();
+});
+
+document.getElementById('channel-back-button').addEventListener('click', () => {
+  saveCurrentGuildSelection();
+  setView('guild');
+});
+
+document.getElementById('channel-continue-button').addEventListener('click', () => {
+  saveCurrentGuildSelection();
+  setView('guild');
+});
+
+document.getElementById('review-selection-button').addEventListener('click', () => {
+  if (!getSelectedCount()) {
+    setView('guild');
+    return;
+  }
+  setView('review');
+});
+
+document.getElementById('review-back-button').addEventListener('click', () => {
+  if (state.selectedGuildOrder.length) {
+    const lastGuild = state.selectedGuildOrder[state.selectedGuildOrder.length - 1];
+    state.currentGuildId = lastGuild;
+    const guild = state.guilds.get(lastGuild);
+    if (guild) setChannelView(lastGuild);
+  } else {
+    setView('guild');
+  }
+});
+
+document.getElementById('review-continue-button').addEventListener('click', () => {
+  const destinations = flattenSelections();
+  if (!destinations.length) {
+    setView('guild');
+    return;
+  }
+  sessionStorage.setItem('dailybread.embedDestinations', JSON.stringify(destinations));
+  window.location.assign('/dashboard/builder');
+});
+
+(async function initializeMassSelection() {
+  sessionStorage.removeItem('dailybread.embedDestinations');
+  await loadGuilds();
+  setView('guild');
+  renderSelectionSummary();
+  renderReview();
 })();
 </script>
+
+<style>
+  .step-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    border: 1px solid rgba(20, 20, 20, 0.12);
+    background: rgba(255, 255, 255, 0.8);
+    color: #514d42;
+    font-size: 0.75rem;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 0.7rem 1rem;
+  }
+
+  .step-pill-active {
+    background: #1a1d23;
+    border-color: #1a1d23;
+    color: #fff;
+  }
+</style>
 {% endblock %}
