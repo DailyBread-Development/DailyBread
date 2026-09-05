@@ -64,6 +64,22 @@
 
         <!-- Embed Details -->
         <section id="normal-builder-panel" class="rounded-[2rem] border border-black/8 bg-white/95 p-6 backdrop-blur-sm sm:p-8">
+          <section class="mb-8 rounded-[1.5rem] border border-black/10 bg-bread-cream/60 p-5" aria-labelledby="destination-heading">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 id="destination-heading" class="font-serif text-2xl font-bold text-bread-ink">Destination Selection</h2>
+                <p class="mt-2 text-sm text-black/65">Choose the servers and channels that should receive this same embed.</p>
+              </div>
+              <div class="flex gap-2">
+                <button id="select-all-guilds" type="button" class="rounded-xl border border-bread-border bg-white px-3 py-2 text-xs font-bold text-bread-ink">Select all servers</button>
+                <button id="clear-guilds" type="button" class="rounded-xl border border-bread-border bg-white px-3 py-2 text-xs font-bold text-bread-ink">Clear</button>
+              </div>
+            </div>
+            <p id="destination-count" class="mt-4 text-sm font-bold text-bread-sage">Servers Selected: 1 · Channels Selected: 0</p>
+            <div id="destination-guilds" class="mt-4 grid gap-3 sm:grid-cols-2"></div>
+            <div id="destination-channels" class="mt-5 space-y-4"></div>
+            <p id="destination-empty" class="mt-4 hidden text-sm font-semibold text-bread-muted">Select at least one server to choose its channels.</p>
+          </section>
           <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 class="font-serif text-2xl font-bold text-bread-ink">Embed Details</h2>
@@ -124,7 +140,7 @@
 
             <div class="grid gap-4 sm:grid-cols-2">
               <div>
-                <label class="block text-sm font-semibold text-bread-ink">Channel</label>
+                <label class="block text-sm font-semibold text-bread-ink">Advanced Container Channel</label>
                 <input id="channel-search-input" type="text" placeholder="Search channels..." class="mt-3 w-full rounded-2xl border border-black/10 bg-bread-cream px-4 py-4 text-base text-bread-ink outline-none transition focus:border-bread-gold focus:ring-4 focus:ring-bread-gold/15" />
                 <select id="builder-channel-id" class="mt-3 w-full rounded-2xl border border-black/10 bg-bread-cream px-4 py-4 text-base text-bread-ink outline-none transition focus:border-bread-gold focus:ring-4 focus:ring-bread-gold/15">
                   <option value="">Select a channel</option>
@@ -285,6 +301,118 @@ const previewTimestamp = getEl('#preview-timestamp');
 
 let availableChannels = [];
 const roleNames = new Map();
+const selectedGuildIds = new Set([String(guildId)]);
+const selectedChannelIds = new Set();
+const destinationGuilds = new Map();
+const destinationChannels = new Map();
+const destinationGuildList = getEl('#destination-guilds');
+const destinationChannelList = getEl('#destination-channels');
+const destinationEmpty = getEl('#destination-empty');
+const destinationCount = getEl('#destination-count');
+
+function destinationKey(guildIdValue, channelIdValue) {
+  return `${guildIdValue}:${channelIdValue}`;
+}
+
+function selectedDestinations() {
+  return [...selectedChannelIds].map((key) => {
+    const [guild_id, channel_id] = key.split(':');
+    return { guild_id, channel_id };
+  });
+}
+
+function updateDestinationCount() {
+  const count = selectedChannelIds.size;
+  destinationCount.textContent = `Servers Selected: ${selectedGuildIds.size} · Channels Selected: ${count}`;
+  if (activeMode === 'normal') sendButton.textContent = `Send to ${count} Channel${count === 1 ? '' : 's'}`;
+}
+
+function renderDestinationSelectors() {
+  if (!destinationGuildList || !destinationChannelList) return;
+  destinationGuildList.replaceChildren();
+  [...destinationGuilds.values()].forEach((guild) => {
+    const label = document.createElement('label');
+    label.className = 'flex cursor-pointer items-center gap-3 rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-bread-ink';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox'; checkbox.checked = selectedGuildIds.has(guild.id); checkbox.value = guild.id;
+    checkbox.addEventListener('change', async () => {
+      if (checkbox.checked) {
+        selectedGuildIds.add(guild.id);
+        await loadDestinationChannels(guild.id);
+      } else {
+        selectedGuildIds.delete(guild.id);
+        [...selectedChannelIds].filter((key) => key.startsWith(`${guild.id}:`)).forEach((key) => selectedChannelIds.delete(key));
+      }
+      renderDestinationSelectors();
+    });
+    label.append(checkbox, document.createTextNode(guild.name));
+    destinationGuildList.append(label);
+  });
+
+  destinationChannelList.replaceChildren();
+  [...selectedGuildIds].forEach((guildIdValue) => {
+    const guild = destinationGuilds.get(guildIdValue);
+    const channels = destinationChannels.get(guildIdValue);
+    if (!guild || !channels) return;
+    const group = document.createElement('section');
+    group.className = 'rounded-2xl border border-black/10 bg-white p-4';
+    const heading = document.createElement('div');
+    heading.className = 'flex items-center justify-between gap-3';
+    const name = document.createElement('h3'); name.className = 'font-semibold text-bread-ink'; name.textContent = guild.name;
+    const all = document.createElement('button'); all.type = 'button'; all.className = 'text-xs font-bold text-bread-gold';
+    const allSelected = channels.length > 0 && channels.every((channel) => selectedChannelIds.has(destinationKey(guildIdValue, channel.id)));
+    all.textContent = allSelected ? 'Deselect all' : 'Select all';
+    all.addEventListener('click', () => {
+      channels.forEach((channel) => {
+        const key = destinationKey(guildIdValue, channel.id);
+        if (allSelected) selectedChannelIds.delete(key); else selectedChannelIds.add(key);
+      });
+      renderDestinationSelectors();
+    });
+    heading.append(name, all); group.append(heading);
+    if (!channels.length) {
+      const empty = document.createElement('p'); empty.className = 'mt-3 text-sm text-bread-muted'; empty.textContent = 'No usable text channels are available.'; group.append(empty);
+    }
+    channels.forEach((channel) => {
+      const label = document.createElement('label'); label.className = 'mt-3 flex cursor-pointer items-center gap-3 text-sm text-bread-ink';
+      const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = selectedChannelIds.has(destinationKey(guildIdValue, channel.id));
+      checkbox.addEventListener('change', () => {
+        const key = destinationKey(guildIdValue, channel.id);
+        if (checkbox.checked) selectedChannelIds.add(key); else selectedChannelIds.delete(key);
+        updateDestinationCount();
+      });
+      label.append(checkbox, document.createTextNode(`#${channel.name}`)); group.append(label);
+    });
+    destinationChannelList.append(group);
+  });
+  destinationEmpty?.classList.toggle('hidden', selectedGuildIds.size > 0);
+  updateDestinationCount();
+}
+
+async function loadDestinationChannels(guildIdValue) {
+  if (destinationChannels.has(guildIdValue)) return;
+  try {
+    const response = await fetch(`/api/guilds/${guildIdValue}/channels`);
+    const data = await response.json();
+    destinationChannels.set(guildIdValue, response.ok && data.success ? data.channels || [] : []);
+  } catch (error) {
+    console.warn('Destination channel load failed.', error);
+    destinationChannels.set(guildIdValue, []);
+  }
+}
+
+async function loadDestinationGuilds() {
+  try {
+    const response = await fetch('/api/guilds');
+    const data = await response.json();
+    const guilds = response.ok && data.success ? (data.guilds || []).filter((guild) => guild.has_bot) : [];
+    guilds.forEach((guild) => destinationGuilds.set(String(guild.guild_id || guild.id), { id: String(guild.guild_id || guild.id), name: guild.name || 'Unnamed server' }));
+    if (!destinationGuilds.has(String(guildId))) destinationGuilds.set(String(guildId), { id: String(guildId), name: 'Current server' });
+    await Promise.all([...selectedGuildIds].map(loadDestinationChannels));
+  } finally {
+    renderDestinationSelectors();
+  }
+}
 
 const presets = {
   daily: {
@@ -530,6 +658,11 @@ function setMode(mode) {
   if (advancedPanel) advancedPanel.classList.toggle('hidden', !isAdvanced);
   if (modeNormalButton) modeNormalButton.className = `rounded-full px-4 py-2 text-sm font-bold ${isAdvanced ? 'text-bread-muted' : 'bg-bread-ink text-white'}`;
   if (modeAdvancedButton) modeAdvancedButton.className = `rounded-full px-4 py-2 text-sm font-bold ${isAdvanced ? 'bg-bread-ink text-white' : 'text-bread-muted'}`;
+  if (isAdvanced) {
+    sendButton.textContent = 'Send Container';
+  } else {
+    updateDestinationCount();
+  }
 }
 
 async function saveEmbed() {
@@ -564,11 +697,10 @@ async function saveEmbed() {
 async function sendEmbed() {
   if (state.loading) return;
 
-  const channelId = state.draft.channel_id;
-  const webhookId = state.draft.webhook_id;
+  const destinations = selectedDestinations();
 
-  if (!channelId) {
-    setStatus('Select a channel before sending.', 'error');
+  if (!destinations.length) {
+    setStatus('Select at least one destination channel before sending.', 'error');
     return;
   }
 
@@ -585,21 +717,26 @@ async function sendEmbed() {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        guild_id: guildId,
-        channel_id: state.draft.channel_id,
-        webhook_id: state.draft.webhook_id || null,
+        destinations,
       }),
     });
     const data = await response.json();
-    if (!response.ok || !data.success) throw new Error(data.error || 'Unable to send embed');
-    setStatus('Embed sent successfully! Check your Discord channel.', 'success');
+    if (!response.ok || !data.success) {
+      if (data.total_destinations) {
+        setStatus(`${data.successful_sends || 0} of ${data.total_destinations} channels sent; ${data.failed_sends || 0} failed.`, 'error');
+        return;
+      }
+      throw new Error(data.error || 'Unable to send embed');
+    }
+    const summary = `${data.successful_sends} of ${data.total_destinations} channels sent successfully.`;
+    setStatus(data.failed_sends ? `${summary} ${data.failed_sends} failed.` : summary, data.failed_sends ? 'error' : 'success');
   } catch (error) {
     console.error('Embed send error:', error);
     setStatus(error.message || 'Send failed. Please try again.', 'error');
   } finally {
     state.loading = false;
     sendButton.disabled = false;
-    sendButton.textContent = 'Send Embed';
+    updateDestinationCount();
   }
 }
 
@@ -610,6 +747,16 @@ useVerseButton.addEventListener('click', useVerse);
 [channelSelect, webhookSelect].forEach((el) => el.addEventListener('change', updateDraft));
 presetSelect.addEventListener('change', (e) => applyPreset(e.target.value));
 channelSearchInput?.addEventListener('input', () => renderChannelOptions(availableChannels));
+document.getElementById('select-all-guilds')?.addEventListener('click', async () => {
+  destinationGuilds.forEach((guild) => selectedGuildIds.add(guild.id));
+  await Promise.all([...selectedGuildIds].map(loadDestinationChannels));
+  renderDestinationSelectors();
+});
+document.getElementById('clear-guilds')?.addEventListener('click', () => {
+  selectedGuildIds.clear();
+  selectedChannelIds.clear();
+  renderDestinationSelectors();
+});
 sendButton.addEventListener('click', async () => {
   if (activeMode === 'advanced') {
     if (window.DailyBreadAdvancedBuilder?.sendContainer) {
@@ -630,6 +777,7 @@ setMode('normal');
 loadChannels();
 loadWebhooks();
 loadRoles();
+loadDestinationGuilds();
 renderPreview();
 </script>
 {% endblock %}

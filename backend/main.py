@@ -403,8 +403,6 @@ async def guild_builder_page(request: Request, guild_id: str, channel_id: str | 
     session = get_session(request)
     if not session:
         return RedirectResponse(url="/login")
-    if not channel_id:
-        return RedirectResponse(url=f"/dashboard/guild/{guild_id}")
 
     guilds = _get_user_guilds_from_db(session)
     guild = next((g for g in guilds if str(g.get("guild_id")) == str(guild_id)), None)
@@ -419,7 +417,7 @@ async def guild_builder_page(request: Request, guild_id: str, channel_id: str | 
             "active_page": "builder",
             "user": session["user"],
             "guild": guild,
-            "selected_channel_id": channel_id,
+            "selected_channel_id": channel_id or "",
         }),
     )
 

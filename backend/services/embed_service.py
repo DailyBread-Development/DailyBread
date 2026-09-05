@@ -112,3 +112,64 @@ async def send_embed(
         return {"success": True, "message": "Embed sent successfully.", "results": results}
 
     return {"success": False, "error": "Webhook delivery failed.", "results": results}
+
+
+async def send_embed_to_destinations(
+    embed_id: str,
+    user_discord_id: str,
+    destinations: List[Dict[str, str]],
+) -> Dict[str, Any]:
+    """Deliver one saved embed to independently validated channel destinations."""
+    embed = database_service.get_embed_by_id(embed_id)
+    user_id = database_service.get_user_id_by_discord_id(user_discord_id)
+    if not embed:
+        return {"success": False, "error": "Embed not found."}
+    if not user_id or str(embed.get("creator_id")) != str(user_id):
+        return {"success": False, "error": "Only the embed creator may send this embed."}
+
+    bible_data = None
+    if embed.get("verse_reference"):
+        try:
+            bible_data = bible_service.resolve_verse_reference(str(embed["verse_reference"]))
+        except Exception:
+            bible_data = None
+    payload = build_payload_from_embed(embed, bible_data)
+
+    results: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for destination in destinations:
+        guild_id = str(destination.get("guild_id") or "").strip()
+        channel_id = str(destination.get("channel_id") or "").strip()
+        key = (guild_id, channel_id)
+        if not guild_id or not channel_id or key in seen:
+            continue
+        seen.add(key)
+
+        outcome: Dict[str, Any] = {"guild_id": guild_id, "channel_id": channel_id, "success": False}
+        if not database_service.user_has_guild_access(user_id, guild_id):
+            outcome["error"] = "You do not have permission to send to this guild."
+        elif not (channel := database_service.get_channel_for_guild(channel_id, guild_id)) or channel.get("channel_type") != 0:
+            outcome["error"] = "Channel is not a valid destination in this guild."
+        else:
+            webhooks = database_service.get_webhooks_for_channel(channel_id)
+            webhook = next((item for item in webhooks if str(item.get("guild_discord_id")) == guild_id), None)
+            if not webhook:
+                outcome["error"] = "No configured webhook is available for this channel."
+            else:
+                delivery = await send_webhook(webhook, payload)
+                outcome.update({"success": bool(delivery.get("success")), "error": delivery.get("error")})
+                database_service.audit(
+                    "embed.sent" if outcome["success"] else "embed.send_failed",
+                    guild_uuid=webhook["guild_id"], user_uuid=user_id,
+                    metadata={"embed_id": embed_id, "webhook_id": webhook["discord_id"], "status_code": delivery.get("status_code")},
+                )
+        results.append(outcome)
+
+    succeeded = sum(item["success"] for item in results)
+    return {
+        "success": succeeded > 0,
+        "total_destinations": len(results),
+        "successful_sends": succeeded,
+        "failed_sends": len(results) - succeeded,
+        "results": results,
+    }

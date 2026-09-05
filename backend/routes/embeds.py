@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 
 from backend.auth import get_session
 from backend.services import database_service
-from backend.services.embed_service import create_embed_for_user, get_embed_for_user, list_embeds_for_user, send_embed
+from backend.services.embed_service import create_embed_for_user, get_embed_for_user, list_embeds_for_user, send_embed, send_embed_to_destinations
 
 router = APIRouter()
 
@@ -106,17 +106,25 @@ async def send_embed_route(embed_id: str, request: Request):
     except ValueError as exc:
         return _error(str(exc), status.HTTP_401_UNAUTHORIZED)
     
-    raw_body = await request.body()
-    print("Raw body:", raw_body)
-    print("Headers:", request.headers)
-
     try:
-        payload = json.loads(raw_body)
+        payload = await request.json()
     except json.JSONDecodeError:
         return _error("Request body is empty or invalid JSON.", status.HTTP_400_BAD_REQUEST)
 
     if not isinstance(payload, dict):
         return _error("Invalid JSON payload.", status.HTTP_400_BAD_REQUEST)
+
+    destinations = payload.get("destinations")
+    if destinations is not None:
+        if not isinstance(destinations, list) or not destinations:
+            return _error("Select at least one channel destination.", status.HTTP_400_BAD_REQUEST)
+        if not all(isinstance(destination, dict) for destination in destinations):
+            return _error("Invalid destination list.", status.HTTP_400_BAD_REQUEST)
+
+        result = await send_embed_to_destinations(embed_id, str(session["user"]["id"]), destinations)
+        if result.get("total_destinations", 0) == 0:
+            return _error("Select at least one unique channel destination.", status.HTTP_400_BAD_REQUEST)
+        return result
 
     guild_id = str(payload.get("guild_id", "") or "").strip()
     channel_id = str(payload.get("channel_id", "") or "").strip()

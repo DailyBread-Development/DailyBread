@@ -157,6 +157,15 @@ def get_channel_by_discord_id(discord_id: str) -> Optional[dict[str, Any]]:
     return _fetch_one("SELECT * FROM channels WHERE discord_id = %s LIMIT 1", (discord_id,))
 
 
+def get_channel_for_guild(channel_discord_id: str, guild_discord_id: str) -> Optional[dict[str, Any]]:
+    """Return a synchronized channel only when it belongs to the requested guild."""
+    return _fetch_one(
+        """SELECT c.* FROM channels c JOIN guilds g ON g.id = c.guild_id
+        WHERE c.discord_id = %s AND g.discord_id = %s LIMIT 1""",
+        (channel_discord_id, guild_discord_id),
+    )
+
+
 def upsert_roles(guild_discord_id: str, roles: list[dict[str, Any]]) -> list[dict[str, Any]]:
     guild = get_guild_by_discord_id(guild_discord_id)
     if not guild:
