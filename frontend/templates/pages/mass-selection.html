@@ -505,7 +505,7 @@ document.getElementById('review-continue-button').addEventListener('click', () =
     return;
   }
   sessionStorage.setItem('dailybread.embedDestinations', JSON.stringify(destinations));
-  window.location.assign('/dashboard/builder');
+  window.location.assign(`/dashboard/guild/${destinations[0].guild_id}/builder?mass_selection=true`);
 });
 
 (async function initializeMassSelection() {

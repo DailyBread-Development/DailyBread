@@ -30,7 +30,7 @@ from backend.auth import (
 )
 from backend.config import DOCS_DIR, STATIC_DIR, TEMPLATES_DIR
 from backend.routes import router as routes_router
-from backend.services import discord_service, database_service
+from backend.services import discord_service, database_service, youversion_service
 from backend.services.media_service import get_media_storage_dir
 
 logger = logging.getLogger(__name__)
@@ -128,10 +128,18 @@ async def landing_page(
         logger.info("OAuth parameters arrived on landing page; forwarding to callback handler")
         return oauth_callback(request, code, state)
 
+    daily_verse = youversion_service.get_today()
+    daily_image = youversion_service.get_daily_image_for_date(daily_verse["date"] if daily_verse else None)
+
     return templates.TemplateResponse(
-        request, 
-        "pages/index.html", 
-        build_template_context(request, {"page_title": "DailyBread", "active_page": "home"}),
+        request,
+        "pages/index.html",
+        build_template_context(request, {
+            "page_title": "DailyBread",
+            "active_page": "home",
+            "daily_verse": daily_verse,
+            "daily_image": daily_image,
+        }),
     )
 # pylint: disable=invalid-name
 @app.get("/login", response_class=HTMLResponse)

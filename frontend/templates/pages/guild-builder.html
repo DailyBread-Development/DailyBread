@@ -236,6 +236,8 @@
 <script src="{{ url_for('static', path='js/advanced-builder.js') }}" defer></script>
 <script>
 const guildId = '{{ guild.guild_id }}';
+const selectedChannelId = '{{ selected_channel_id }}';
+const isMassSelection = new URLSearchParams(window.location.search).get('mass_selection') === 'true';
 const state = {
   verse: null,
   draft: {
@@ -304,6 +306,9 @@ try {
   if (Array.isArray(storedDestinations)) selectedDestinations = storedDestinations;
 } catch (_) { selectedDestinations = []; }
 sessionStorage.removeItem('dailybread.embedDestinations');
+if (!isMassSelection && selectedChannelId) {
+  selectedDestinations = [{ guild_id: guildId, channel_id: selectedChannelId }];
+}
 
 const presets = {
   daily: {
@@ -612,7 +617,7 @@ async function sendEmbed() {
   const destinations = selectedDestinations;
 
   if (!destinations.length) {
-    setStatus('Select at least one destination channel before sending.', 'error');
+    setStatus(isMassSelection ? 'Select at least one destination channel before sending.' : 'Please select a channel before sending.', 'error');
     return;
   }
 
@@ -628,9 +633,9 @@ async function sendEmbed() {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        destinations,
-      }),
+      body: JSON.stringify(isMassSelection
+        ? { destinations }
+        : { guild_id: destinations[0].guild_id, channel_id: destinations[0].channel_id }),
     });
     const data = await response.json();
     if (!response.ok || !data.success) {

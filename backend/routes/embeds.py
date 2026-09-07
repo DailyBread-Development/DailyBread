@@ -151,6 +151,8 @@ async def send_embed_route(embed_id: str, request: Request):
             return _error("You do not have permission to send to this guild.", status.HTTP_403_FORBIDDEN)
 
     if channel_id:
+        if guild_id and not database_service.get_channel_for_guild(channel_id, guild_id):
+            return _error("Selected channel does not belong to the requested guild.", status.HTTP_400_BAD_REQUEST)
         webhooks = database_service.get_webhooks_for_channel(channel_id)
         if not webhooks:
             return _error("No webhook found for the selected channel.", status.HTTP_404_NOT_FOUND)

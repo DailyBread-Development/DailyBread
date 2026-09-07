@@ -40,6 +40,44 @@ body {
   min-height: 100vh;
 }
 
+.daily-verse-panel {
+  background: rgba(255, 253, 249, 0.8);
+  backdrop-filter: blur(4px);
+}
+
+.daily-verse-kicker {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.daily-verse-date {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: rgba(190, 138, 53, 0.08);
+  padding: 0.35rem 0.7rem;
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: var(--color-text-secondary);
+}
+
+.daily-verse-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(90deg, rgba(190, 138, 53, 0.08), rgba(190, 138, 53, 0.16), rgba(190, 138, 53, 0.08));
+  background-size: 200% 100%;
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 input,
 select,
 textarea,

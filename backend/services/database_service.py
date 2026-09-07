@@ -8,7 +8,7 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from dotenv import load_dotenv
 from psycopg.rows import dict_row
@@ -26,6 +26,11 @@ _POOL: ConnectionPool | None = None
 
 class DatabaseError(Exception):
     """Raised for safe, application-level database failures."""
+
+
+def _as_query(sql: str) -> Any:
+    """Cast SQL strings to the broad psycopg query type accepted by type checkers."""
+    return cast(Any, sql)
 
 
 def _database_url() -> str:
@@ -53,7 +58,7 @@ def _pool() -> ConnectionPool:
 def _fetch_one(sql: str, params: tuple[Any, ...] = ()) -> Optional[dict[str, Any]]:
     try:
         with _pool().connection() as conn, conn.cursor() as cur:
-            cur.execute(sql, params)
+            cur.execute(_as_query(sql), params)
             return cur.fetchone()
     except Exception as exc:
         LOGGER.exception("PostgreSQL query failed")
@@ -63,7 +68,7 @@ def _fetch_one(sql: str, params: tuple[Any, ...] = ()) -> Optional[dict[str, Any
 def _fetch_all(sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
     try:
         with _pool().connection() as conn, conn.cursor() as cur:
-            cur.execute(sql, params)
+            cur.execute(_as_query(sql), params)
             return list(cur.fetchall())
     except Exception as exc:
         LOGGER.exception("PostgreSQL query failed")
@@ -145,7 +150,7 @@ def upsert_channels(guild_discord_id: str, channels: list[dict[str, Any]]) -> li
         with _pool().connection() as conn, conn.cursor() as cur:
             rows = []
             for channel in channels:
-                cur.execute(sql, (guild["id"], channel["discord_id"], channel.get("name") or "unnamed", int(channel.get("channel_type", 0)), int(channel.get("position", 0)), channel.get("category_id"), bool(channel.get("nsfw", False))))
+                cur.execute(_as_query(sql), (guild["id"], channel["discord_id"], channel.get("name") or "unnamed", int(channel.get("channel_type", 0)), int(channel.get("position", 0)), channel.get("category_id"), bool(channel.get("nsfw", False))))
                 rows.append(cur.fetchone())
             return rows
     except Exception as exc:
@@ -176,7 +181,7 @@ def upsert_roles(guild_discord_id: str, roles: list[dict[str, Any]]) -> list[dic
         with _pool().connection() as conn, conn.cursor() as cur:
             rows = []
             for role in roles:
-                cur.execute(sql, (guild["id"], role["discord_role_id"], role["name"], int(role.get("color", 0)), int(role.get("position", 0)), int(role.get("permissions", 0))))
+                cur.execute(_as_query(sql), (guild["id"], role["discord_role_id"], role["name"], int(role.get("color", 0)), int(role.get("position", 0)), int(role.get("permissions", 0))))
                 rows.append(cur.fetchone())
             return rows
     except Exception as exc:
@@ -187,9 +192,9 @@ def upsert_roles(guild_discord_id: str, roles: list[dict[str, Any]]) -> list[dic
 def replace_member_roles(guild_member_id: str, role_ids: list[str]) -> None:
     try:
         with _pool().connection() as conn, conn.cursor() as cur:
-            cur.execute("DELETE FROM member_roles WHERE guild_member_id = %s", (guild_member_id,))
+            cur.execute(_as_query("DELETE FROM member_roles WHERE guild_member_id = %s"), (guild_member_id,))
             if role_ids:
-                cur.executemany("INSERT INTO member_roles (guild_member_id, role_id) VALUES (%s, %s)", [(guild_member_id, role_id) for role_id in role_ids])
+                cur.executemany(_as_query("INSERT INTO member_roles (guild_member_id, role_id) VALUES (%s, %s)"), [(guild_member_id, role_id) for role_id in role_ids])
     except Exception as exc:
         LOGGER.exception("PostgreSQL member-role replacement failed")
         raise DatabaseError("Database operation failed.") from exc
@@ -213,14 +218,14 @@ def list_embeds_for_user(user_uuid: str) -> list[dict[str, Any]]:
 def create_container(creator_id: str, name: str, data: dict[str, Any], guild_discord_id: str | None = None) -> dict[str, Any]:
     try:
         with _pool().connection() as conn, conn.cursor() as cur:
-            cur.execute("INSERT INTO containers (creator_id, name, data) VALUES (%s, %s, %s) RETURNING *", (creator_id, name or "Untitled container", Jsonb(data)))
+            cur.execute(_as_query("INSERT INTO containers (creator_id, name, data) VALUES (%s, %s, %s) RETURNING *"), (creator_id, name or "Untitled container", Jsonb(data)))
             container = cur.fetchone()
             if guild_discord_id:
-                cur.execute("SELECT id FROM guilds WHERE discord_id = %s LIMIT 1", (guild_discord_id,))
+                cur.execute(_as_query("SELECT id FROM guilds WHERE discord_id = %s LIMIT 1"), (guild_discord_id,))
                 guild = cur.fetchone()
                 if not guild:
                     raise DatabaseError("The selected guild has not been synchronized by the bot.")
-                cur.execute("INSERT INTO guild_containers (guild_id, container_id) VALUES (%s, %s) ON CONFLICT (guild_id, container_id) DO NOTHING", (guild["id"], container["id"]))
+                cur.execute(_as_query("INSERT INTO guild_containers (guild_id, container_id) VALUES (%s, %s) ON CONFLICT (guild_id, container_id) DO NOTHING"), (guild["id"], container["id"]))
             return container
     except DatabaseError:
         raise
@@ -304,6 +309,10 @@ def audit(action: str, guild_uuid: str | None = None, user_uuid: str | None = No
 
 def get_bible_cache(cache_key: str) -> Optional[dict[str, Any]]:
     return _fetch_one("SELECT * FROM bible_cache WHERE cache_key = %s LIMIT 1", (cache_key,))
+
+
+def get_latest_daily_verse_cache() -> Optional[dict[str, Any]]:
+    return _fetch_one("SELECT * FROM bible_cache WHERE cache_key LIKE 'daily_verse:%' ORDER BY cache_key DESC LIMIT 1", ())
 
 
 def store_bible_cache(cache_key: str, reference: str, text: str, translation: str | None = None) -> dict[str, Any]:
