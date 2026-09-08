@@ -4,9 +4,14 @@
 <section class="min-h-[calc(100vh-6rem)] bg-bread-background py-8">
   <div class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
     <div class="mb-6 rounded-[1.5rem] border border-bread-border bg-bread-surface p-6 shadow-soft sm:p-8">
-      <p class="text-sm font-extrabold uppercase tracking-[0.18em] text-bread-muted">Embed Builder</p>
-      <h1 class="mt-3 font-serif text-3xl font-bold text-bread-ink sm:text-4xl">Select a server first.</h1>
-      <p class="mt-3 max-w-2xl text-sm leading-6 text-bread-muted">Choose a Discord server, then pick a channel before opening the builder.</p>
+      <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <p class="text-sm font-extrabold uppercase tracking-[0.18em] text-bread-muted">Embed Builder</p>
+          <h1 class="mt-3 font-serif text-3xl font-bold text-bread-ink sm:text-4xl">Choose where to begin.</h1>
+          <p class="mt-3 max-w-2xl text-sm leading-6 text-bread-muted">Open the embed builder from any server, then select multiple server and channel destinations.</p>
+        </div>
+        <a href="/dashboard/builder/mass-selection" class="inline-flex min-h-11 items-center justify-center rounded-2xl bg-bread-ink px-5 text-sm font-semibold text-white transition hover:bg-black">Mass Selection</a>
+      </div>
     </div>
 
         {% if guilds %}
@@ -21,7 +26,8 @@
       </label>
     </div>
 
-    <div id="guild-picker-grid" class="grid gap-5 sm:grid-cols-2">
+    <div id="normal-builder-panel" class="space-y-6">
+      <div id="guild-picker-grid" class="grid gap-5 sm:grid-cols-2">
       {% for guild in guilds %}
       <article class="guild-picker-card rounded-[1.75rem] border border-black/10 bg-white/95 p-6 shadow-sm transition hover:border-bread-gold/50 hover:shadow-md" data-guild-name="{{ guild.name|lower }}">
         <div class="flex items-center gap-4">
@@ -37,20 +43,23 @@
             <p class="mt-2 inline-flex rounded-full bg-bread-background px-3 py-1 text-xs font-bold uppercase tracking-[0.15em] text-bread-muted">Ready for embeds</p>
           </div>
         </div>
-        <a href="/dashboard/guild/{{ guild.guild_id }}" class="mt-6 inline-flex min-h-11 w-full items-center justify-center rounded-2xl border border-bread-border bg-bread-background px-4 text-sm font-semibold text-bread-ink transition hover:bg-bread-hover">
-          Open Server
+        <a href="/dashboard/guild/{{ guild.guild_id }}/builder" class="mt-6 inline-flex min-h-11 w-full items-center justify-center rounded-2xl border border-bread-border bg-bread-background px-4 text-sm font-semibold text-bread-ink transition hover:bg-bread-hover">
+          Open Embed Builder
         </a>
       </article>
       {% endfor %}
     </div>
-    <div id="guild-picker-empty" class="mt-5 hidden rounded-[1.5rem] border border-dashed border-bread-border bg-white/95 p-8 text-center">
-      <p class="text-sm font-semibold text-bread-muted">No servers match your search.</p>
+      <div id="guild-picker-empty" class="mt-5 hidden rounded-[1.5rem] border border-dashed border-bread-border bg-white/95 p-8 text-center">
+        <p class="text-sm font-semibold text-bread-muted">No servers match your search.</p>
+      </div>
     </div>
     {% else %}
-    <div class="rounded-[1.25rem] border border-dashed border-bread-border bg-white/95 p-8 text-center">
+    <div id="normal-builder-panel" class="rounded-[1.25rem] border border-dashed border-bread-border bg-white/95 p-8 text-center">
       <p class="text-sm font-semibold text-bread-muted">No Discord servers found.</p>
     </div>
     {% endif %}
+    </div>
+
   </div>
 </section>
 <script>
@@ -59,26 +68,26 @@ document.addEventListener('DOMContentLoaded', () => {
   const cards = Array.from(document.querySelectorAll('.guild-picker-card'));
   const emptyState = document.getElementById('guild-picker-empty');
 
-  if (!searchInput || cards.length === 0) return;
+  if (searchInput && cards.length > 0) {
+    const filterCards = () => {
+      const query = searchInput.value.trim().toLowerCase();
+      let visibleCount = 0;
 
-  const filterCards = () => {
-    const query = searchInput.value.trim().toLowerCase();
-    let visibleCount = 0;
+      cards.forEach((card) => {
+        const name = card.dataset.guildName || '';
+        const match = !query || name.includes(query);
+        card.style.display = match ? '' : 'none';
+        if (match) visibleCount += 1;
+      });
 
-    cards.forEach((card) => {
-      const name = card.dataset.guildName || '';
-      const match = !query || name.includes(query);
-      card.style.display = match ? '' : 'none';
-      if (match) visibleCount += 1;
-    });
+      if (emptyState) {
+        emptyState.style.display = visibleCount > 0 ? 'none' : 'flex';
+      }
+    };
 
-    if (emptyState) {
-      emptyState.style.display = visibleCount > 0 ? 'none' : 'flex';
-    }
-  };
-
-  searchInput.addEventListener('input', filterCards);
-  filterCards();
+    searchInput.addEventListener('input', filterCards);
+    filterCards();
+  }
 });
 </script>
 {% endblock %}

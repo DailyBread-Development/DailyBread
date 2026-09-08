@@ -39,7 +39,12 @@
           <h2 class="font-serif text-3xl font-bold text-bread-ink m">Text Channels</h2>
           <p class="mt-2 text-sm text-black/65">Create webhooks to send Bible embeds.</p>
         </div>
-        <div id="channel-load-status" class="text-sm font-semibold text-bread-ink/70" >Loading channels...</div>
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div id="channel-load-status" class="text-sm font-semibold text-bread-ink/70" >Loading channels...</div>
+          <button id="sync-channels-btn" type="button" class="rounded-2xl bg-bread-gold px-4 py-2 text-sm font-bold uppercase tracking-[0.15em] text-white transition hover:bg-[#c79f4a]" onclick="syncChannels()">
+            Sync Channels
+          </button>
+        </div>
       </div>
 
       <div class="mb-5">
@@ -242,6 +247,60 @@ async function deleteWebhook(webhookId) {
   } catch (error) {
     alert(`Error: ${error.message}`);
   }
+}
+
+async function syncChannels() {
+  const btn = document.getElementById('sync-channels-btn');
+  const originalText = btn.textContent;
+  
+  try {
+    btn.disabled = true;
+    btn.textContent = '⟳ Syncing...';
+    
+    const response = await fetch(`/api/sync/guilds/${guildId}/channels`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok || !data.success) {
+      showChannelNotification(data.error || 'Unable to sync channels', 'error');
+      btn.textContent = originalText;
+      btn.disabled = false;
+      return;
+    }
+    
+    // Show success message
+    showChannelNotification(`Channels synced successfully (${data.channels?.length || 0} channel(s))`, 'success');
+    
+    // Reload channels after a short delay
+    setTimeout(() => {
+      loadChannels();
+      btn.textContent = originalText;
+      btn.disabled = false;
+    }, 500);
+    
+  } catch (error) {
+    console.error('Sync error:', error);
+    showChannelNotification('Unable to sync channels', 'error');
+    btn.textContent = originalText;
+    btn.disabled = false;
+  }
+}
+
+function showChannelNotification(message, type = 'info') {
+  // Create a simple notification
+  const notification = document.createElement('div');
+  notification.className = `fixed top-4 right-4 rounded-2xl px-6 py-3 text-sm font-semibold text-white z-50 ${
+    type === 'success' ? 'bg-emerald-600' : type === 'error' ? 'bg-red-600' : 'bg-blue-600'
+  }`;
+  notification.textContent = message;
+  document.body.appendChild(notification);
+  
+  setTimeout(() => {
+    notification.remove();
+  }, 3000);
 }
 
 if (channelSearch) {

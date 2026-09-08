@@ -5,8 +5,8 @@ from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
 from backend.auth import get_session
-from backend.services import supabase_service
-from backend.services.embed_service import create_embed_for_user, get_embed_for_user, list_embeds_for_user, send_embed
+from backend.services import database_service
+from backend.services.embed_service import create_embed_for_user, get_embed_for_user, list_embeds_for_user, send_embed, send_embed_to_destinations
 
 router = APIRouter()
 
@@ -43,14 +43,12 @@ async def create_embed(request: Request):
 
     title = str(payload.get("title", "")).strip()
     description = str(payload.get("description", "")).strip()
-    verse_reference = payload.get("verse_reference")
     color = payload.get("color")
     footer = payload.get("footer")
-    message_content = str(payload.get("message_content", "")).strip()
     image_url = str(payload.get("image_url", "")).strip()
 
-    if not title and not description and not message_content:
-        return _error("Message content, embed title, or embed description is required.", status.HTTP_400_BAD_REQUEST)
+    if not title and not description:
+        return _error("Embed title or description is required.", status.HTTP_400_BAD_REQUEST)
 
     if color is not None:
         try:
@@ -65,10 +63,8 @@ async def create_embed(request: Request):
         user_discord_id=str(session["user"]["id"]),
         title=title,
         description=description,
-        verse_reference=str(verse_reference).strip() if verse_reference else None,
         color=color,
         footer=str(footer).strip() if footer else None,
-        message_content=message_content or None,
         image_url=image_url or None,
     )
 
@@ -110,17 +106,25 @@ async def send_embed_route(embed_id: str, request: Request):
     except ValueError as exc:
         return _error(str(exc), status.HTTP_401_UNAUTHORIZED)
     
-    raw_body = await request.body()
-    print("Raw body:", raw_body)
-    print("Headers:", request.headers)
-
     try:
-        payload = json.loads(raw_body)
+        payload = await request.json()
     except json.JSONDecodeError:
         return _error("Request body is empty or invalid JSON.", status.HTTP_400_BAD_REQUEST)
 
     if not isinstance(payload, dict):
         return _error("Invalid JSON payload.", status.HTTP_400_BAD_REQUEST)
+
+    destinations = payload.get("destinations")
+    if destinations is not None:
+        if not isinstance(destinations, list) or not destinations:
+            return _error("Select at least one channel destination.", status.HTTP_400_BAD_REQUEST)
+        if not all(isinstance(destination, dict) for destination in destinations):
+            return _error("Invalid destination list.", status.HTTP_400_BAD_REQUEST)
+
+        result = await send_embed_to_destinations(embed_id, str(session["user"]["id"]), destinations)
+        if result.get("total_destinations", 0) == 0:
+            return _error("Select at least one unique channel destination.", status.HTTP_400_BAD_REQUEST)
+        return result
 
     guild_id = str(payload.get("guild_id", "") or "").strip()
     channel_id = str(payload.get("channel_id", "") or "").strip()
@@ -129,31 +133,33 @@ async def send_embed_route(embed_id: str, request: Request):
     if not guild_id and not channel_id and not webhook_id:
         return _error("guild_id, channel_id, or webhook_id is required.", status.HTTP_400_BAD_REQUEST)
 
-    embed = supabase_service.get_embed_by_id(embed_id)
+    embed = database_service.get_embed_by_id(embed_id)
     if not embed:
         return _error("Embed not found.", status.HTTP_404_NOT_FOUND)
 
-    user_id = supabase_service.get_user_id_by_discord_id(str(session["user"]["id"]))
+    user_id = database_service.get_user_id_by_discord_id(str(session["user"]["id"]))
     if not user_id or str(embed.get("creator_id")) != str(user_id):
         return _error("Only the embed creator may send this embed.", status.HTTP_403_FORBIDDEN)
 
     if webhook_id:
-        webhook = supabase_service.get_webhook_by_id(webhook_id)
+        webhook = database_service.get_webhook_by_id(webhook_id)
         if not webhook:
             return _error("Webhook not found.", status.HTTP_404_NOT_FOUND)
         if guild_id and str(webhook.get("guild_discord_id")) != guild_id:
             return _error("Selected webhook does not belong to the requested guild.", status.HTTP_400_BAD_REQUEST)
-        if not supabase_service.user_has_guild_access(user_id, str(webhook.get("guild_discord_id") or "")):
+        if not database_service.user_has_guild_access(user_id, str(webhook.get("guild_discord_id") or "")):
             return _error("You do not have permission to send to this guild.", status.HTTP_403_FORBIDDEN)
 
     if channel_id:
-        webhooks = supabase_service.get_webhooks_for_channel(channel_id)
+        if guild_id and not database_service.get_channel_for_guild(channel_id, guild_id):
+            return _error("Selected channel does not belong to the requested guild.", status.HTTP_400_BAD_REQUEST)
+        webhooks = database_service.get_webhooks_for_channel(channel_id)
         if not webhooks:
             return _error("No webhook found for the selected channel.", status.HTTP_404_NOT_FOUND)
-        if not any(supabase_service.user_has_guild_access(user_id, str(wh.get("guild_discord_id") or "")) for wh in webhooks):
+        if not any(database_service.user_has_guild_access(user_id, str(wh.get("guild_discord_id") or "")) for wh in webhooks):
             return _error("You do not have permission to send to this channel's guild.", status.HTTP_403_FORBIDDEN)
 
-    if guild_id and not supabase_service.user_has_guild_access(user_id, guild_id):
+    if guild_id and not database_service.user_has_guild_access(user_id, guild_id):
         return _error("You do not have permission to send to this guild.", status.HTTP_403_FORBIDDEN)
 
     result = await send_embed(

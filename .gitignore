@@ -1,5 +1,5 @@
 .env
-vemv/
+venv/
 __pycache__/
 node_modules/
 dist/
@@ -10,3 +10,7 @@ docker-compose.yml
 Dockerfile
 loki-config.yml
 tunnel-credentials.json
+.gitignore
+package-lock.json
+package.json
+tests/

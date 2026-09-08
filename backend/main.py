@@ -28,9 +28,10 @@ from backend.auth import (
     fetch_discord_guilds,
     fetch_discord_user,
 )
-from backend.config import STATIC_DIR, TEMPLATES_DIR
+from backend.config import DOCS_DIR, STATIC_DIR, TEMPLATES_DIR
 from backend.routes import router as routes_router
-from backend.services import discord_service, supabase_service
+from backend.services import discord_service, database_service, youversion_service
+from backend.services.media_service import get_media_storage_dir
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -38,12 +39,21 @@ logging.basicConfig(level=logging.INFO)
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", os.getenv("discord_client_id", ""))
 
 
-app = FastAPI(title="DailyBread", version="0.1.0")
+app = FastAPI(title="DailyBread", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+media_dir = get_media_storage_dir()
+app.mount("/media", StaticFiles(directory=str(media_dir), html=False), name="media")
 app.include_router(routes_router)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
+
+
+def _load_docs_file(filename: str) -> str:
+    file_path = DOCS_DIR / filename
+    if not file_path.exists():
+        return "<p class=\"docs-placeholder\">This document could not be found.</p>"
+    return file_path.read_text(encoding="utf-8")
 
 
 def _is_api_request(request: Request) -> bool:
@@ -92,15 +102,15 @@ def build_template_context(request: Request, extra: dict | None = None) -> dict:
 # pylint: disable=invalid-name 
 def _get_user_guilds_from_db(session: dict) -> list[dict]:
     try:
-        user_record = supabase_service.get_user_by_discord_id(str(session["user"]["id"]))
+        user_record = database_service.get_user_by_discord_id(str(session["user"]["id"]))
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Unable to load guilds from Supabase; using session guilds. error=%s", exc)
+        logger.warning("Unable to load guilds from PostgreSQL; using session guilds. error=%s", exc)
         return session.get("guilds", [])
 
     if not user_record:
         return session.get("guilds", [])
 
-    guilds = supabase_service.get_user_guilds(user_record["id"])
+    guilds = database_service.get_user_guilds(user_record["id"])
     for guild in guilds:
         guild["icon_url"] = build_guild_icon_url({"id": guild.get("guild_id"), "icon": guild.get("icon")})
     return guilds
@@ -118,10 +128,18 @@ async def landing_page(
         logger.info("OAuth parameters arrived on landing page; forwarding to callback handler")
         return oauth_callback(request, code, state)
 
+    daily_verse = youversion_service.get_today()
+    daily_image = youversion_service.get_daily_image_for_date(daily_verse["date"] if daily_verse else None)
+
     return templates.TemplateResponse(
-        request, 
-        "pages/index.html", 
-        build_template_context(request, {"page_title": "DailyBread", "active_page": "home"}),
+        request,
+        "pages/index.html",
+        build_template_context(request, {
+            "page_title": "DailyBread",
+            "active_page": "home",
+            "daily_verse": daily_verse,
+            "daily_image": daily_image,
+        }),
     )
 # pylint: disable=invalid-name
 @app.get("/login", response_class=HTMLResponse)
@@ -182,7 +200,7 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
         guilds_data = fetch_discord_guilds(access_token)
         logger.info("Discord guilds fetched count=%s", len(guilds_data))
 
-        logger.info("Supabase OAuth sync started")
+        logger.info("PostgreSQL OAuth sync started")
         user = {
             "id": user_data["id"],
             "username": user_data["username"],
@@ -190,12 +208,15 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
             "avatar_url": build_avatar_url(user_data),
         }
 
-        user_record = supabase_service.upsert_user_by_discord_id(
+        user_record = database_service.upsert_user_by_discord_id(
             discord_id=str(user_data["id"]),
             username=user_data.get("username", ""),
             avatar=user.get("avatar"),
             global_name=user_data.get("global_name", ""),
         )
+        # A website login is the only event that updates PostgreSQL. The bot
+        # never performs background database synchronization.
+        database_service.store_oauth_session(user_record["id"], token_data)
         synced_guilds = []
         for guild in guilds_data:
             guild_id = str(guild.get("id", ""))
@@ -213,34 +234,39 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Bot presence check failed guild_id=%s error=%s", guild_id, exc)
 
-            db_guild = supabase_service.upsert_guild(
-                guild_id=guild_id,
-                name=guild.get("name", ""),
-                icon=guild.get("icon"),
-                owner_id=guild.get("owner_id"),
-                permissions=permissions,
-                has_bot=has_bot,
+            # Only the logged-in user's manageable guilds are written.
+            db_guild = database_service.upsert_guild(
+                guild_id,
+                guild.get("name", ""),
+                guild.get("icon"),
+                str(user_data["id"]) if is_owner else None,
+                has_bot,
             )
-            supabase_service.ensure_user_guild(
-                user_id=user_record["id"],
-                guild_id=guild_id,
-                permissions=permissions,
-                is_owner=is_owner,
-                is_admin=is_admin,
+            database_service.upsert_guild_member(
+                db_guild["id"], user_record["id"], is_owner, is_admin
             )
+            if has_bot:
+                try:
+                    channels = discord_service.list_guild_channels(guild_id)
+                    database_service.upsert_channels(guild_id, [
+                        {"discord_id": str(channel["id"]), "name": channel.get("name"), "channel_type": channel.get("type", 0), "position": channel.get("position", 0), "category_id": channel.get("parent_id"), "nsfw": channel.get("nsfw", False)}
+                        for channel in channels
+                    ])
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Guild channel sync failed guild_id=%s error=%s", guild_id, exc)
             synced_guilds.append(
                 {
-                    "guild_id": db_guild["guild_id"],
-                    "name": db_guild.get("name"),
+                    "guild_id": guild_id,
+                    "name": db_guild["name"],
                     "icon": db_guild.get("icon"),
-                    "icon_url": build_guild_icon_url(db_guild) if db_guild.get("icon") else None,
+                    "icon_url": build_guild_icon_url(guild),
                     "has_bot": has_bot,
                     "is_owner": is_owner,
                     "is_admin": is_admin,
                 }
             )
 
-        logger.info("Supabase OAuth sync completed guild_count=%s", len(synced_guilds))
+        logger.info("PostgreSQL OAuth sync completed guild_count=%s", len(synced_guilds))
     except Exception as exc:
         logger.error("OAuth callback failed: %s\n%s", exc, traceback.format_exc())
         raise
@@ -258,6 +284,84 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
     )
     response.delete_cookie(STATE_COOKIE_NAME)
     return response
+
+
+# Documentation
+@app.get("/docs", response_class=HTMLResponse)
+async def docs_home_page(request: Request) -> HTMLResponse:
+    session = get_session(request)
+    if not session:
+        return RedirectResponse(url="/login")
+
+    return templates.TemplateResponse(
+        request,
+        "pages/docs.html",
+        build_template_context(request, {
+            "page_title": "Documentation - DailyBread",
+            "active_page": "docs",
+            "user": session["user"],
+        }),
+    )
+
+
+@app.get("/docs/help", response_class=HTMLResponse)
+async def docs_help_page(request: Request) -> HTMLResponse:
+    session = get_session(request)
+    if not session:
+        return RedirectResponse(url="/login")
+
+    return templates.TemplateResponse(
+        request,
+        "pages/docs-detail.html",
+        build_template_context(request, {
+            "page_title": "Help - DailyBread",
+            "active_page": "docs",
+            "user": session["user"],
+            "document_title": "Help",
+            "last_updated": None,
+            "document_body": _load_docs_file("help.html"),
+        }),
+    )
+
+
+@app.get("/docs/terms", response_class=HTMLResponse)
+async def docs_terms_page(request: Request) -> HTMLResponse:
+    session = get_session(request)
+    if not session:
+        return RedirectResponse(url="/login")
+
+    return templates.TemplateResponse(
+        request,
+        "pages/docs-detail.html",
+        build_template_context(request, {
+            "page_title": "Terms of Service - DailyBread",
+            "active_page": "docs",
+            "user": session["user"],
+            "document_title": "Terms of Service",
+            "last_updated": "June 2026",
+            "document_body": _load_docs_file("terms.html"),
+        }),
+    )
+
+
+@app.get("/docs/privacy", response_class=HTMLResponse)
+async def docs_privacy_page(request: Request) -> HTMLResponse:
+    session = get_session(request)
+    if not session:
+        return RedirectResponse(url="/login")
+
+    return templates.TemplateResponse(
+        request,
+        "pages/docs-detail.html",
+        build_template_context(request, {
+            "page_title": "Privacy Policy - DailyBread",
+            "active_page": "docs",
+            "user": session["user"],
+            "document_title": "Privacy Policy",
+            "last_updated": "June 2026",
+            "document_body": _load_docs_file("privacy.html"),
+        }),
+    )
 
 
 # Dashboard
@@ -310,8 +414,6 @@ async def guild_builder_page(request: Request, guild_id: str, channel_id: str | 
     session = get_session(request)
     if not session:
         return RedirectResponse(url="/login")
-    if not channel_id:
-        return RedirectResponse(url=f"/dashboard/guild/{guild_id}")
 
     guilds = _get_user_guilds_from_db(session)
     guild = next((g for g in guilds if str(g.get("guild_id")) == str(guild_id)), None)
@@ -326,7 +428,7 @@ async def guild_builder_page(request: Request, guild_id: str, channel_id: str | 
             "active_page": "builder",
             "user": session["user"],
             "guild": guild,
-            "selected_channel_id": channel_id,
+            "selected_channel_id": channel_id or "",
         }),
     )
 
@@ -352,24 +454,26 @@ async def builder_page(request: Request) -> HTMLResponse:
     )
 
 
-@app.get("/dashboard/advanced-builder", response_class=HTMLResponse)
-async def advanced_builder_page(request: Request) -> HTMLResponse:
+@app.get("/dashboard/builder/mass-selection", response_class=HTMLResponse)
+async def mass_selection_page(request: Request) -> HTMLResponse:
     session = get_session(request)
     if not session:
         return RedirectResponse(url="/login")
 
-    guilds = _get_user_guilds_from_db(session)
-    advanced_guilds = [guild for guild in guilds if guild.get("has_bot")]
     return templates.TemplateResponse(
         request,
-        "pages/advanced-builder.html",
+        "pages/mass-selection.html",
         build_template_context(request, {
-            "page_title": "Advanced Builder - DailyBread",
-            "active_page": "advanced_builder",
+            "page_title": "Choose Destinations - DailyBread",
+            "active_page": "builder",
             "user": session["user"],
-            "guilds": advanced_guilds,
         }),
     )
+
+
+@app.get("/dashboard/advanced-builder")
+async def advanced_builder_page(request: Request) -> RedirectResponse:
+    return RedirectResponse(url="/dashboard/builder")
 
 
 # Logout

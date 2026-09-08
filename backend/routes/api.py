@@ -1,10 +1,13 @@
 from typing import Any
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, File, Request, UploadFile, status
 from fastapi.responses import JSONResponse
 
-from backend.auth import build_guild_icon_url, get_session
-from backend.services import bible_service, discord_service, supabase_service
+from backend.auth import build_guild_icon_url, get_session, fetch_discord_guilds, fetch_discord_user
+from backend.services import bible_service, discord_service, database_service
+from backend.services.container_service import normalize_container_payload
+from backend.services.media_service import save_uploaded_media, validate_image_upload
+from backend.services.webhook_sender import send_webhook
 
 api_router = APIRouter()
 
@@ -59,9 +62,14 @@ def _normalize_color(color: Any) -> int | None:
         return None
 
 
+def _validate_container_payload(payload: Any) -> dict[str, Any]:
+    """Validate the safe Components V2 subset accepted by DailyBread."""
+    return normalize_container_payload(payload)
+
+
 # Embed Payload Builder - constructs the Discord embed payload from the input data
 def _embed_payload(embed: dict[str, Any]) -> dict[str, Any]:
-    payload = {
+    payload: dict[str, Any] = {
         "embeds": [
             {
                 "title": embed.get("title"),
@@ -93,60 +101,6 @@ def _embed_payload(embed: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-# Sync User and Guilds - ensures the user and their guilds are upserted in the database, and returns the normalized guild data for API responses
-def _sync_user_and_guilds(session: dict[str, Any]) -> dict[str, Any]:
-    user_profile = session["user"]
-    user_record = supabase_service.upsert_user_by_discord_id(
-        discord_id=str(user_profile["id"]),
-        username=user_profile.get("username", ""),
-        avatar=user_profile.get("avatar"),
-        global_name=user_profile.get("global_name", ""),
-    )
-
-    synced_guilds = []
-    for guild in session.get("guilds", []):
-        guild_id = str(guild.get("guild_id", ""))
-        is_owner = guild.get("is_owner", False)
-        is_admin = guild.get("is_admin", False)
-        permissions = int(guild.get("permissions", 0) or 0)
-
-        # Bot presence is already in session from OAuth sync
-        has_bot = guild.get("has_bot", False)
-
-        db_guild = supabase_service.upsert_guild(
-            guild_id=guild_id,
-            name=guild.get("name", ""),
-            icon=guild.get("icon"),
-            owner_id=str(user_record["discord_id"]) if is_owner else None,
-            permissions=permissions,
-            has_bot=has_bot,
-        )
-
-        supabase_service.ensure_user_guild(
-            user_id=user_record["id"],
-            guild_id=guild_id,
-            permissions=permissions,
-            is_owner=is_owner,
-            is_admin=is_admin,
-        )
-
-        # Normalized response format
-        synced_guilds.append(
-            {
-                "guild_id": db_guild["guild_id"],
-                "name": db_guild.get("name"),
-                "icon": db_guild.get("icon"),
-                "icon_url": build_guild_icon_url(db_guild) if db_guild.get("icon") else None,
-                "has_bot": has_bot,
-                "is_owner": is_owner,
-                "is_admin": is_admin,
-            }
-        )
-    return {"user": user_record, "guilds": synced_guilds}
-
-
-
-
 # API Endpoints
 # Guild Endpoints - list guilds, list channels, create webhook, list webhooks, delete webhook
 @api_router.get("/guilds")
@@ -156,14 +110,18 @@ async def get_guilds(request: Request):
     except ValueError as exc:
         return _error(str(exc), status.HTTP_401_UNAUTHORIZED)
 
-    user_record = supabase_service.get_user_by_discord_id(str(session["user"]["id"]))
+    user_record = database_service.get_user_by_discord_id(str(session["user"]["id"]))
     if not user_record:
-        synced = _sync_user_and_guilds(session)
-        return {"success": True, "guilds": synced["guilds"]}
+        # A valid website session was created at OAuth login. Do not turn a
+        # later API request into an implicit guild synchronization event.
+        return {"success": True, "guilds": session.get("guilds", [])}
 
-    guilds = supabase_service.get_user_guilds(user_record["id"])
+    guilds = database_service.get_user_guilds(user_record["id"])
     for guild in guilds:
-        guild["icon_url"] = build_guild_icon_url({"id": guild.get("guild_id"), "icon": guild.get("icon")})
+        guild["icon_url"] = build_guild_icon_url({
+            "id": str(guild.get("guild_id") or ""),
+            "icon": str(guild.get("icon") or ""),
+        })
 
     return {"success": True, "guilds": guilds}
 
@@ -224,19 +182,70 @@ async def get_guild_channels(guild_id: str, request: Request):
         if channel.get("type") == 0
     ]
 
-    supabase_service.upsert_channels(
-        [
-            {
-                "discord_id": str(channel["id"]),
-                "guild_discord_id": guild_id,
-                "name": channel.get("name"),
-                "channel_type": channel.get("type"),
-            }
-            for channel in channels
-        ]
-    )
-
     return {"success": True, "channels": text_channels}
+
+
+@api_router.get("/guilds/{guild_id}/roles")
+async def get_guild_roles(guild_id: str, request: Request):
+    """Expose bot-visible role names for authenticated embed previews."""
+    try:
+        session = _require_session(request)
+    except ValueError as exc:
+        return _error(str(exc), status.HTTP_401_UNAUTHORIZED)
+
+    guild = _find_guild(session, guild_id)
+    if not guild or not _has_guild_permission(guild):
+        return _error("Insufficient permissions for this guild.", status.HTTP_403_FORBIDDEN)
+
+    try:
+        roles = discord_service.list_guild_roles(guild_id)
+    except RuntimeError as exc:
+        return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
+
+    return {
+        "success": True,
+        "roles": [{"id": str(role["id"]), "name": role.get("name") or "Role", "color": role.get("color", 0)} for role in roles],
+    }
+
+
+def _mention_guild(request: Request, guild_id: str) -> tuple[dict[str, Any] | None, JSONResponse | None]:
+    try:
+        session = _require_session(request)
+    except ValueError as exc:
+        return None, _error(str(exc), status.HTTP_401_UNAUTHORIZED)
+    guild = _find_guild(session, guild_id)
+    if not guild:
+        return None, _error("Guild not found in your Discord session.", status.HTTP_403_FORBIDDEN)
+    if not _has_guild_permission(guild):
+        return None, _error("Insufficient permissions for this guild.", status.HTTP_403_FORBIDDEN)
+    return guild, None
+
+
+@api_router.get("/guilds/{guild_id}/members/search")
+async def search_guild_members(guild_id: str, request: Request, q: str = ""):
+    _, error = _mention_guild(request, guild_id)
+    if error:
+        return error
+    try:
+        members = discord_service.search_guild_members(guild_id, q)
+    except RuntimeError as exc:
+        return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
+    for member in members:
+        avatar = member.pop("avatar", None)
+        member["avatar_url"] = f"https://cdn.discordapp.com/avatars/{member['id']}/{avatar}.png?size=64" if avatar else "/static/images/dailybread-avatar.svg"
+    return {"success": True, "members": members}
+
+
+@api_router.get("/guilds/{guild_id}/roles/search")
+async def search_guild_roles(guild_id: str, request: Request, q: str = ""):
+    _, error = _mention_guild(request, guild_id)
+    if error:
+        return error
+    try:
+        roles = discord_service.search_guild_roles(guild_id, q)
+    except RuntimeError as exc:
+        return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
+    return {"success": True, "roles": roles}
 
 
 # Channel Endpoints - create webhook for channel
@@ -253,7 +262,7 @@ async def create_channel_webhook(guild_id: str, channel_id: str, request: Reques
     if not _has_guild_permission(guild):
         return _error("Insufficient permissions for this guild.", status.HTTP_403_FORBIDDEN)
 
-    existing = supabase_service.get_webhooks_for_channel(channel_id)
+    existing = database_service.get_webhooks_for_channel(channel_id)
     if existing:
         return _error(
             "A webhook already exists for this channel. Use an existing webhook or create a new channel target.",
@@ -261,18 +270,21 @@ async def create_channel_webhook(guild_id: str, channel_id: str, request: Reques
         )
 
     try:
-        webhook = discord_service.create_webhook(channel_id)
+        channel_name_row = database_service.get_channel_by_discord_id(channel_id)
+        channel_label = (channel_name_row.get("name") if channel_name_row else None) or "dailybread"
+        webhook_name = str(channel_label).strip().lstrip("#").replace(" ", "-").lower()
+        webhook = discord_service.create_webhook(channel_id, webhook_name or "dailybread")
     except RuntimeError as exc:
         return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
 
-    webhook_record = supabase_service.create_webhook_record(webhook)
+    webhook_record = database_service.create_webhook_record(webhook)
     return {
         "success": True,
         "webhook": {
-            "id": webhook_record["discord_id"],
+            "id": webhook_record["discord_webhook_id"],
             "name": webhook_record.get("name"),
-            "channel_id": webhook_record.get("channel_discord_id"),
-            "guild_id": webhook_record.get("guild_discord_id"),
+            "channel_id": webhook_record.get("webhook_id"),
+            "guild_id": webhook_record.get("guild_id"),
         },
     }
 
@@ -296,6 +308,8 @@ async def create_embed(request: Request):
     footer = str(data.get("footer", "")).strip()
     message_content = str(data.get("message_content", "")).strip()
     image_url = str(data.get("image_url", "")).strip()
+    thumbnail_url = str(data.get("thumbnail_url", "")).strip()
+    author = str(data.get("author", "")).strip()
     color_value = data.get("color")
 
     if not title and not description and not message_content:
@@ -312,31 +326,64 @@ async def create_embed(request: Request):
         except Exception as exc:
             return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
 
-    # Supabase upsert user and embed record
+    # PostgreSQL upsert user and embed record
     user_profile = session["user"]
-    user_record = supabase_service.upsert_user_by_discord_id(
+    user_record = database_service.upsert_user_by_discord_id(
         discord_id=str(user_profile["id"]),
         username=user_profile.get("username", ""),
         avatar=user_profile.get("avatar", ""),
         global_name=user_profile.get("global_name", ""),
     )
 
-    embed_record = supabase_service.create_embed(
+    embed_record = database_service.create_embed(
         creator_id=user_record["id"],
         title=title,
         description=description,
-        verse_reference=verse_reference or None,
-        verse_text=verse_text or None,
         footer=footer or None,
         color=normalized_color,
-        message_content=message_content or None,
         image_url=image_url or None,
+        thumbnail_url=thumbnail_url or None,
+        author=author or None,
+        message_content=message_content or None,
+        verse_reference=verse_reference or None,
     )
 
     return {
         "success": True,
         "embed": embed_record,
         "embed_id": str(embed_record.get("id")),
+    }
+
+
+@api_router.post("/media/upload")
+async def upload_media(request: Request, file: UploadFile = File(...)):
+    try:
+        _require_session(request)
+    except ValueError as exc:
+        return _error(str(exc), status.HTTP_401_UNAUTHORIZED)
+
+    if file is None or not getattr(file, "filename", None):
+        return _error("No file selected.", status.HTTP_400_BAD_REQUEST)
+
+    try:
+        file_bytes = await file.read()
+        validate_image_upload(file_bytes, file.filename)
+        saved = save_uploaded_media(file_bytes, file.filename, request)
+    except ValueError as exc:
+        return _error(str(exc), status.HTTP_400_BAD_REQUEST)
+    except Exception as exc:  # pragma: no cover - defensive failure path
+        import logging
+        logging.getLogger(__name__).exception("Media upload failed")
+        return _error("Unable to store the uploaded image. Please try again.", status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    return {
+        "success": True,
+        "url": saved["url"],
+        "filename": saved["filename"],
+        "size": saved["size"],
+        "width": saved["width"],
+        "height": saved["height"],
+        "format": saved["format"],
     }
 
 
@@ -353,7 +400,7 @@ async def get_guild_webhooks(guild_id: str, request: Request):
         return _error("Guild not found in your Discord session.", status.HTTP_403_FORBIDDEN)
 
     try:
-        webhooks = supabase_service.get_webhooks_for_guild(guild_id)
+        webhooks = database_service.get_webhooks_for_guild(guild_id)
     except Exception as exc:
         return _error(str(exc) or "Failed to retrieve webhooks.", status.HTTP_502_BAD_GATEWAY)
 
@@ -379,11 +426,14 @@ async def delete_webhook(webhook_id: str, request: Request):
     except ValueError as exc:
         return _error(str(exc), status.HTTP_401_UNAUTHORIZED)
 
-    webhook = supabase_service.get_webhook_by_id(webhook_id)
+    webhook = database_service.get_webhook_by_id(webhook_id)
     if not webhook:
         return _error("Webhook not found.", status.HTTP_404_NOT_FOUND)
 
-    guild_id = webhook.get("guild_discord_id")
+    guild_id = str(webhook.get("guild_discord_id") or "")
+    if not guild_id:
+        return _error("Guild ID missing for webhook.", status.HTTP_400_BAD_REQUEST)
+
     guild = _find_guild(session, guild_id)
     if not guild:
         return _error("Guild not found in your Discord session.", status.HTTP_403_FORBIDDEN)
@@ -391,8 +441,244 @@ async def delete_webhook(webhook_id: str, request: Request):
         return _error("Insufficient permissions for this guild.", status.HTTP_403_FORBIDDEN)
 
     try:
-        supabase_service.delete_webhook(webhook_id)
+        database_service.delete_webhook(webhook_id)
         return {"success": True, "message": "Webhook deleted successfully."}
     except Exception as exc:
         return _error(str(exc) or "Failed to delete webhook.", status.HTTP_502_BAD_GATEWAY)
+
+
+@api_router.get("/containers")
+async def list_containers(request: Request):
+    try:
+        session = _require_session(request)
+        user_id = database_service.get_user_id_by_discord_id(str(session["user"]["id"]))
+        if not user_id:
+            return {"success": True, "containers": []}
+        containers = database_service.list_containers_for_user(user_id)
+        for container in containers:
+            links = container.pop("guild_containers", [])
+            container["container_json"] = container.pop("data")
+            container["guild_discord_id"] = str(links[0]["guilds"]["discord_id"]) if links and links[0].get("guilds") else None
+        return {"success": True, "containers": containers}
+    except Exception as exc:
+        return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
+
+
+@api_router.post("/containers/create")
+async def create_container(request: Request):
+    try:
+        session = _require_session(request)
+        data = await request.json()
+        payload = _validate_container_payload(data.get("container_json"))
+        guild_id = str(data.get("guild_discord_id") or "") or None
+        if guild_id:
+            guild = _find_guild(session, guild_id)
+            if not guild or not _has_guild_permission(guild):
+                return _error("Insufficient permissions for this guild.", status.HTTP_403_FORBIDDEN)
+        user_id = database_service.get_user_id_by_discord_id(str(session["user"]["id"]))
+        if not user_id:
+            user = session["user"]
+            user_id = database_service.upsert_user_by_discord_id(str(user["id"]), user.get("username", ""), user.get("avatar"), user.get("global_name"))["id"]
+        container = database_service.create_container(user_id, str(data.get("name") or "Untitled container"), payload, guild_id)
+        return {"success": True, "container_id": container["id"], "container": container}
+    except ValueError as exc:
+        return _error(str(exc), status.HTTP_400_BAD_REQUEST)
+    except Exception as exc:
+        return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
+
+
+@api_router.post("/containers/{container_id}/send")
+async def send_container(container_id: str, request: Request):
+    try:
+        session = _require_session(request)
+        body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        user_id = database_service.get_user_id_by_discord_id(str(session["user"]["id"]))
+        container = database_service.get_container_for_user(container_id, user_id or "") if user_id else None
+        channel_id = str(body.get("channel_id") or "")
+        if not user_id:
+            return _error("Authentication required.", status.HTTP_401_UNAUTHORIZED)
+        if not container or not channel_id:
+            return _error("A saved container and target channel are required.", status.HTTP_400_BAD_REQUEST)
+        webhooks = database_service.get_webhooks_for_channel(channel_id)
+        if not webhooks or not any(database_service.user_has_guild_access(str(user_id), wh["guild_discord_id"]) for wh in webhooks):
+            return _error("No authorized webhook exists for this channel.", status.HTTP_403_FORBIDDEN)
+        results = [await send_webhook(webhook, container["data"]) for webhook in webhooks]
+        for webhook, result in zip(webhooks, results):
+            database_service.audit("container.sent" if result["success"] else "container.send_failed", webhook["guild_id"], user_id, {"container_id": container_id, "webhook_id": webhook["discord_id"]})
+        return {"success": all(result["success"] for result in results), "results": results}
+    except Exception as exc:
+        return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
+
+
+# Manual Sync Endpoints
+@api_router.post("/sync/guilds")
+async def sync_user_guilds(request: Request):
+    """Manually synchronize the user's guilds from Discord."""
+    try:
+        session = _require_session(request)
+    except ValueError as exc:
+        return _error(str(exc), status.HTTP_401_UNAUTHORIZED)
+
+    user_discord_id = str(session["user"]["id"])
+    try:
+        user_record = database_service.get_user_by_discord_id(user_discord_id)
+        if not user_record:
+            return _error("User not found in database.", status.HTTP_404_NOT_FOUND)
+
+        # Get the user's latest OAuth session
+        oauth_session = database_service.get_latest_oauth_session(user_record["id"])
+        if not oauth_session:
+            return _error("No valid Discord session found. Please log in again.", status.HTTP_401_UNAUTHORIZED)
+
+        # Fetch the user's current guilds and user info from Discord
+        access_token = oauth_session.get("access_token")
+        user_data = fetch_discord_user(access_token)
+        guilds_data = fetch_discord_guilds(access_token)
+
+        # Sync guilds
+        synced_guilds = []
+        for guild in guilds_data:
+            guild_id = str(guild.get("id", ""))
+            is_owner = guild.get("owner") is True
+            permissions = int(guild.get("permissions", 0) or 0)
+            is_admin = is_owner or ((permissions & 0x8) == 0x8)
+
+            # Only sync guilds where user is owner or admin
+            if not is_admin:
+                continue
+
+            # Check if bot is in the guild
+            has_bot = False
+            try:
+                has_bot = discord_service.is_bot_in_guild(guild_id)
+            except Exception:  # noqa: BLE001
+                pass
+
+            # Upsert guild record
+            db_guild = database_service.upsert_guild(
+                guild_id,
+                guild.get("name", ""),
+                guild.get("icon"),
+                str(user_data["id"]) if is_owner else None,
+                has_bot,
+            )
+
+            # Upsert guild member relationship
+            database_service.upsert_guild_member(
+                db_guild["id"], user_record["id"], is_owner, is_admin
+            )
+
+            # Sync channels if bot is present
+            if has_bot:
+                try:
+                    channels = discord_service.list_guild_channels(guild_id)
+                    database_service.upsert_channels(guild_id, [
+                        {
+                            "discord_id": str(channel["id"]),
+                            "name": channel.get("name"),
+                            "channel_type": channel.get("type", 0),
+                            "position": channel.get("position", 0),
+                            "category_id": channel.get("parent_id"),
+                            "nsfw": channel.get("nsfw", False)
+                        }
+                        for channel in channels
+                    ])
+                except Exception:  # noqa: BLE001
+                    pass
+
+            synced_guilds.append({
+                "guild_id": guild_id,
+                "name": db_guild["name"],
+                "icon": db_guild.get("icon"),
+                "icon_url": build_guild_icon_url(guild),
+                "has_bot": has_bot,
+                "is_owner": is_owner,
+                "is_admin": is_admin,
+            })
+
+        return {
+            "success": True,
+            "message": f"Synchronized {len(synced_guilds)} guild(s).",
+            "guilds": synced_guilds,
+        }
+
+    except Exception as exc:
+        import traceback
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Guild sync failed: %s", exc)
+        return _error("Unable to sync guilds. Please try again.", status.HTTP_502_BAD_GATEWAY)
+
+
+@api_router.post("/sync/guilds/{guild_id}/channels")
+async def sync_guild_channels(guild_id: str, request: Request):
+    """Manually synchronize channels for a specific guild."""
+    try:
+        session = _require_session(request)
+    except ValueError as exc:
+        return _error(str(exc), status.HTTP_401_UNAUTHORIZED)
+
+    user_discord_id = str(session["user"]["id"])
+    guild_id = str(guild_id)
+
+    try:
+        # Verify user has access to the guild
+        user_record = database_service.get_user_by_discord_id(user_discord_id)
+        if not user_record:
+            return _error("User not found in database.", status.HTTP_404_NOT_FOUND)
+
+        # Check if user has access to this guild
+        if not database_service.user_has_guild_access(user_record["id"], guild_id):
+            return _error("You do not have access to this guild.", status.HTTP_403_FORBIDDEN)
+
+        # Verify guild exists and bot is present
+        guild = database_service.get_guild_by_discord_id(guild_id)
+        if not guild:
+            return _error("Guild not found. Sync guilds first.", status.HTTP_404_NOT_FOUND)
+
+        if not guild.get("has_bot"):
+            return _error("DailyBread bot is not in this guild.", status.HTTP_403_FORBIDDEN)
+
+        # Fetch channels from Discord
+        try:
+            channels = discord_service.list_guild_channels(guild_id)
+        except RuntimeError as exc:
+            return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
+
+        # Sync channels to PostgreSQL
+        synced_channels = database_service.upsert_channels(guild_id, [
+            {
+                "discord_id": str(channel["id"]),
+                "name": channel.get("name"),
+                "channel_type": channel.get("type", 0),
+                "position": channel.get("position", 0),
+                "category_id": channel.get("parent_id"),
+                "nsfw": channel.get("nsfw", False)
+            }
+            for channel in channels
+        ])
+
+        # Filter for text channels
+        text_channels = [
+            {
+                "id": str(ch["discord_id"]),
+                "name": ch.get("name"),
+                "type": ch.get("channel_type"),
+            }
+            for ch in synced_channels
+            if ch.get("channel_type") == 0
+        ]
+
+        return {
+            "success": True,
+            "message": f"Synchronized {len(text_channels)} channel(s).",
+            "channels": text_channels,
+        }
+
+    except Exception as exc:
+        import traceback
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Channel sync failed: %s", exc)
+        return _error("Unable to sync channels. Please try again.", status.HTTP_502_BAD_GATEWAY)
 

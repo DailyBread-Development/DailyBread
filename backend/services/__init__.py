@@ -1,10 +1,11 @@
-from . import bible_service, discord_service, embed_service, supabase_service, webhook_sender, webhook_service
+from . import bible_service, database_service, discord_service, embed_service, webhook_sender, webhook_service, youversion_service
 
 __all__ = [
     "bible_service",
     "discord_service",
     "embed_service",
-    "supabase_service",
+    "database_service",
     "webhook_sender",
     "webhook_service",
+    "youversion_service",
 ]
