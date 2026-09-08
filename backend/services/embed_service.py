@@ -1,7 +1,10 @@
+import logging
 from typing import Any, Dict, List, Optional
 
 from backend.services import database_service, bible_service
 from backend.services.webhook_sender import build_payload_from_embed, send_webhook
+
+LOGGER = logging.getLogger(__name__)
 
 
 # Embed Payload Builder - constructs the JSON payload to send to Discord webhooks based on the embed data and optional Bible verse information.
@@ -137,32 +140,55 @@ async def send_embed_to_destinations(
 
     results: List[Dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
+    LOGGER.info("Mass send starting embed_id=%s destination_count=%s", embed_id, len(destinations))
     for destination in destinations:
         guild_id = str(destination.get("guild_id") or "").strip()
         channel_id = str(destination.get("channel_id") or "").strip()
         key = (guild_id, channel_id)
-        if not guild_id or not channel_id or key in seen:
+        if key in seen:
             continue
         seen.add(key)
 
         outcome: Dict[str, Any] = {"guild_id": guild_id, "channel_id": channel_id, "success": False}
-        if not database_service.user_has_guild_access(user_id, guild_id):
-            outcome["error"] = "You do not have permission to send to this guild."
-        elif not (channel := database_service.get_channel_for_guild(channel_id, guild_id)) or channel.get("channel_type") != 0:
-            outcome["error"] = "Channel is not a valid destination in this guild."
-        else:
-            webhooks = database_service.get_webhooks_for_channel(channel_id)
-            webhook = next((item for item in webhooks if str(item.get("guild_discord_id")) == guild_id), None)
-            if not webhook:
-                outcome["error"] = "No configured webhook is available for this channel."
+        LOGGER.info("Mass send destination guild_id=%s channel_id=%s", guild_id, channel_id)
+        try:
+            if not guild_id or not channel_id:
+                outcome["error"] = "Destination is missing a guild or channel ID."
+            elif not database_service.user_has_guild_access(user_id, guild_id):
+                outcome["error"] = "You do not have permission to send to this guild."
+            elif not (guild := database_service.get_guild_by_discord_id(guild_id)) or not guild.get("has_bot"):
+                outcome["error"] = "DailyBread is not installed in this server."
             else:
-                delivery = await send_webhook(webhook, payload)
-                outcome.update({"success": bool(delivery.get("success")), "error": delivery.get("error")})
-                database_service.audit(
-                    "embed.sent" if outcome["success"] else "embed.send_failed",
-                    guild_uuid=webhook["guild_id"], user_uuid=user_id,
-                    metadata={"embed_id": embed_id, "webhook_id": webhook["discord_id"], "status_code": delivery.get("status_code")},
-                )
+                channel = database_service.get_channel_for_guild(channel_id, guild_id)
+                channel_type = channel.get("channel_type") if channel else None
+                if not channel or int(channel_type) != 0:
+                    outcome["error"] = "Channel is not a valid text destination in this server."
+                else:
+                    webhooks = database_service.get_webhooks_for_channel(channel_id)
+                    webhook = next((item for item in webhooks if str(item.get("guild_discord_id")) == guild_id), None)
+                    if not webhook:
+                        outcome["error"] = "No DailyBread webhook is configured for this channel."
+                    else:
+                        delivery = await send_webhook(webhook, payload)
+                        outcome.update({"success": bool(delivery.get("success")), "error": delivery.get("error")})
+                        database_service.audit(
+                            "embed.sent" if outcome["success"] else "embed.send_failed",
+                            guild_uuid=webhook["guild_id"], user_uuid=user_id,
+                            metadata={"embed_id": embed_id, "webhook_id": webhook["discord_id"], "status_code": delivery.get("status_code")},
+                        )
+        except (TypeError, ValueError):
+            outcome["error"] = "Channel data is invalid for this destination."
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("Mass send destination processing failed guild_id=%s channel_id=%s", guild_id, channel_id)
+            outcome["error"] = "Unable to process this destination."
+
+        if outcome["success"]:
+            LOGGER.info("Mass send destination succeeded guild_id=%s channel_id=%s", guild_id, channel_id)
+        else:
+            LOGGER.warning(
+                "Mass send destination failed guild_id=%s channel_id=%s error=%s",
+                guild_id, channel_id, outcome.get("error", "Unknown send failure"),
+            )
         results.append(outcome)
 
     succeeded = sum(item["success"] for item in results)

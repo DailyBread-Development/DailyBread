@@ -335,6 +335,19 @@ function setStatus(message, type = 'info') {
     : 'mt-4 text-sm font-semibold text-emerald-700';
 }
 
+function renderSendFailures(results) {
+  const failures = (results || []).filter((result) => !result.success);
+  if (!failures.length) return;
+  const details = document.createElement('ul');
+  details.className = 'mt-3 space-y-2 text-sm font-normal text-rose-600';
+  failures.forEach((failure) => {
+    const item = document.createElement('li');
+    item.textContent = `${failure.guild_id || 'Unknown server'} — ${failure.channel_id || 'Unknown channel'}: ${failure.error || 'Unknown send failure'}`;
+    details.append(item);
+  });
+  builderStatus.append(details);
+}
+
 function renderPreview() {
   if (state.draft.message_content) {
     renderDiscordText(previewMessageContent, state.draft.message_content);
@@ -641,6 +654,7 @@ async function sendEmbed() {
     if (!response.ok || !data.success) {
       if (data.total_destinations) {
         setStatus(`${data.successful_sends || 0} of ${data.total_destinations} channels sent; ${data.failed_sends || 0} failed.`, 'error');
+        renderSendFailures(data.results);
         return;
       }
       throw new Error(data.error || 'Unable to send embed');

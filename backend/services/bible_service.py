@@ -1,13 +1,16 @@
 import os
 import re
+import logging
 from pathlib import Path
-import traceback
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 import requests
 
 from backend.services.database_service import get_bible_cache, store_bible_cache
+
+LOGGER = logging.getLogger(__name__)
+_BOOKS_CACHE: Dict[str, List[Dict[str, Any]]] = {}
 
 # Load environment variables from .env file if it exists
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -147,10 +150,75 @@ def _parse_reference_query(query: str) -> Dict[str, Any]:
     }
 
 
+def _parse_passage_reference(reference: str) -> Optional[Dict[str, str]]:
+    match = re.match(r"^(?P<book>.+?)\s+(?P<chapter>\d+):(?P<verse>\d+(?:-\d+)?)$", reference.strip())
+    if not match:
+        return None
+    return match.groupdict()
+
+
+def _normalize_book_name(name: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", " ", name.casefold()).strip()
+    normalized = re.sub(r"\s+", " ", normalized)
+    roman_prefixes = {"i": "1", "ii": "2", "iii": "3"}
+    parts = normalized.split(" ", 1)
+    if len(parts) == 2 and parts[0] in roman_prefixes:
+        normalized = f"{roman_prefixes[parts[0]]} {parts[1]}"
+    return "psalm" if normalized == "psalms" else normalized
+
+
+def _find_book_id(book_name: str, bible_id: str) -> Optional[str]:
+    books = _BOOKS_CACHE.get(bible_id)
+    if books is None:
+        api_config = _get_api_config()
+        response = requests.get(
+            f"{api_config['base_url']}/bibles/{bible_id}/books",
+            headers=_api_headers(),
+            params={"include-chapters": "false"},
+            timeout=15,
+        )
+        response.raise_for_status()
+        books = response.json().get("data", [])
+        if not isinstance(books, list):
+            raise ValueError("Invalid api.bible response; book metadata is missing.")
+        _BOOKS_CACHE[bible_id] = [book for book in books if isinstance(book, dict)]
+
+    requested_name = _normalize_book_name(book_name)
+    for book in books:
+        names = {
+            _normalize_book_name(str(book.get("name") or "")),
+            _normalize_book_name(str(book.get("nameLong") or "")),
+            _normalize_book_name(str(book.get("abbreviation") or "")),
+        }
+        if requested_name in names and book.get("id"):
+            return str(book["id"])
+    return None
+
+
 # Resolves a verse reference to its passage ID using the Bible API.
 def _find_passage_id(reference: str, bible_id: Optional[str] = None) -> str:
     api_config = _get_api_config()
     selected_bible_id = bible_id or api_config["bible_id"]
+    parsed_reference = _parse_passage_reference(reference)
+    if parsed_reference:
+        book_id = _find_book_id(parsed_reference["book"], selected_bible_id)
+        if book_id:
+            verse = parsed_reference["verse"]
+            end_verse = verse.split("-", 1)[-1]
+            passage_id = f"{book_id}.{parsed_reference['chapter']}.{verse}"
+            if "-" in verse:
+                passage_id = f"{book_id}.{parsed_reference['chapter']}.{verse.split('-', 1)[0]}-{book_id}.{parsed_reference['chapter']}.{end_verse}"
+            LOGGER.info(
+                "API.Bible passage resolved translation_id=%s book_id=%s reference=%s",
+                selected_bible_id, book_id, reference,
+            )
+            return passage_id
+
+        LOGGER.info(
+            "API.Bible book metadata did not match reference=%s translation_id=%s; falling back to search",
+            reference, selected_bible_id,
+        )
+
     response = requests.get(
         f"{api_config['base_url']}/bibles/{selected_bible_id}/search",
         headers=_api_headers(),
@@ -248,8 +316,8 @@ def resolve_verse_reference(reference: str) -> Optional[Dict[str, Any]]:
             )
             return bible_data
         except Exception as exc:
-             traceback.print_exc()
-             last_error = exc
+            LOGGER.warning("Bible reference lookup failed reference=%s error=%s", selected_reference, exc)
+            last_error = exc
         continue
 
     if last_error:
