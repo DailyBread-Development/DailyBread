@@ -46,6 +46,17 @@
       {% if user %}
       <a href="/dashboard" class="mobile-nav-link {{ 'is-active' if active_page == 'dashboard' else '' }}">Dashboard</a>
       <a href="/dashboard/builder" class="mobile-nav-link {{ 'is-active' if active_page == 'builder' else '' }}">Embed Builder</a>
+      <div class="mobile-user-menu">
+        <button type="button" data-mobile-user-menu-toggle class="mobile-user-trigger" aria-expanded="false" aria-controls="mobile-user-menu-dropdown">
+          <img src="{{ user.avatar_url or url_for('static', path='images/DailyBread.svg') }}" alt="{{ user.username }} avatar" class="h-8 w-8 rounded-full object-cover" />
+          <span>{{ user.username }}</span>
+          <svg class="user-menu-chevron" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m5.5 7.5 4.5 4.5 4.5-4.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div id="mobile-user-menu-dropdown" class="mobile-user-dropdown" data-mobile-user-menu-dropdown>
+          <a href="/docs" class="user-menu-item">Docs</a>
+          <a href="/logout" class="user-menu-item">Log Out</a>
+        </div>
+      </div>
       {% else %}
       <a href="/login" class="mobile-nav-link {{ 'is-active' if active_page == 'login' else '' }}">Login</a>
       <a href="/login" class="mt-2 flex min-h-12 items-center justify-center rounded-full bg-bread-ink px-5 text-sm font-bold text-bread-cream ">Login with Discord</a>

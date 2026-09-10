@@ -309,6 +309,8 @@ sessionStorage.removeItem('dailybread.embedDestinations');
 if (!isMassSelection && selectedChannelId) {
   selectedDestinations = [{ guild_id: guildId, channel_id: selectedChannelId }];
 }
+window.DailyBreadMentionGuilds = [...new Map(selectedDestinations.map((destination) => [String(destination.guild_id), { id: String(destination.guild_id), name: destination.guild_name || 'Selected server' }])).values()];
+if (!window.DailyBreadMentionGuilds.length) window.DailyBreadMentionGuilds = [{ id: guildId, name: 'Current server' }];
 
 const presets = {
   daily: {
@@ -647,8 +649,8 @@ async function sendEmbed() {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(isMassSelection
-        ? { destinations }
-        : { guild_id: destinations[0].guild_id, channel_id: destinations[0].channel_id }),
+        ? { destinations, role_mentions: window.DailyBreadMentionSelections || [] }
+        : { guild_id: destinations[0].guild_id, channel_id: destinations[0].channel_id, role_mentions: window.DailyBreadMentionSelections || [] }),
     });
     const data = await response.json();
     if (!response.ok || !data.success) {

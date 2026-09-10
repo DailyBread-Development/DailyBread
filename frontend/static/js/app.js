@@ -21,6 +21,8 @@ mobileMenu?.querySelectorAll("a").forEach((link) => {
 
 const userMenu = document.querySelector("[data-user-menu]");
 const userMenuToggle = document.querySelector("[data-user-menu-toggle]");
+const mobileUserMenu = document.querySelector(".mobile-user-menu");
+const mobileUserMenuToggle = document.querySelector("[data-mobile-user-menu-toggle]");
 
 const closeUserMenu = () => {
   userMenu?.classList.remove("is-open");
@@ -41,6 +43,11 @@ userMenuToggle?.addEventListener("keydown", (event) => {
     userMenuToggle.setAttribute("aria-expanded", "true");
     userMenuItems[0]?.focus();
   }
+});
+
+mobileUserMenuToggle?.addEventListener("click", () => {
+  const isOpen = mobileUserMenu?.classList.toggle("is-open");
+  mobileUserMenuToggle.setAttribute("aria-expanded", String(Boolean(isOpen)));
 });
 
 userMenuItems.forEach((item, index) => {
@@ -70,12 +77,18 @@ userMenuItems.forEach((item, index) => {
 
 document.addEventListener("click", (event) => {
   if (userMenu && !userMenu.contains(event.target)) closeUserMenu();
+  if (mobileUserMenu && !mobileUserMenu.contains(event.target)) {
+    mobileUserMenu.classList.remove("is-open");
+    mobileUserMenuToggle?.setAttribute("aria-expanded", "false");
+  }
 });
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closeUserMenu();
     setMobileMenuState(false);
+    mobileUserMenu?.classList.remove("is-open");
+    mobileUserMenuToggle?.setAttribute("aria-expanded", "false");
     if (document.activeElement === userMenuToggle || userMenu?.contains(document.activeElement)) {
       userMenuToggle?.focus();
     }

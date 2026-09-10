@@ -199,6 +199,46 @@ button {
   opacity: 1;
 }
 
+.mobile-user-menu {
+  border-top: 1px solid rgb(43 37 32 / 0.08);
+  padding-top: 0.5rem;
+}
+
+.mobile-user-trigger {
+  display: flex;
+  width: 100%;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.65rem;
+  border: 0;
+  border-radius: 0.65rem;
+  padding: 0.4rem 0.55rem 0.4rem 0.4rem;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 0.875rem;
+  font-weight: 800;
+  text-align: left;
+}
+
+.mobile-user-trigger:hover,
+.mobile-user-trigger:focus-visible {
+  background: var(--color-hover);
+}
+
+.mobile-user-trigger .user-menu-chevron {
+  margin-left: auto;
+}
+
+.mobile-user-dropdown {
+  display: none;
+  margin-top: 0.25rem;
+  padding-left: 1rem;
+}
+
+.mobile-user-menu.is-open .mobile-user-dropdown {
+  display: block;
+}
+
 /* --- Buttons --- */
 .icon-button {
   min-height: 2.75rem;

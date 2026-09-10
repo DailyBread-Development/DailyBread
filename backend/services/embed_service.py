@@ -1,10 +1,43 @@
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from backend.services import database_service, bible_service
 from backend.services.webhook_sender import build_payload_from_embed, send_webhook
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _payload_for_destination(payload: Dict[str, Any], guild_id: str, role_mentions: Any) -> Dict[str, Any]:
+    """Keep selected role IDs scoped to their originating Discord guild."""
+    selected = {
+        str(item.get("id")): item
+        for item in (role_mentions if isinstance(role_mentions, list) else [])
+        if isinstance(item, dict) and item.get("type") == "role" and item.get("id")
+    }
+    if not selected:
+        return payload
+
+    import copy
+    safe_payload = copy.deepcopy(payload)
+    pattern = re.compile(r"<@&(\d+)>")
+
+    def sanitize(value: Any) -> Any:
+        if isinstance(value, str):
+            def replace(match: re.Match[str]) -> str:
+                role = selected.get(match.group(1))
+                if not role or str(role.get("guild_id")) == guild_id:
+                    return match.group(0)
+                return f"@{role.get('role_name') or 'role'}"
+
+            return pattern.sub(replace, value)
+        if isinstance(value, dict):
+            return {key: sanitize(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [sanitize(item) for item in value]
+        return value
+
+    return sanitize(safe_payload)
 
 
 # Embed Payload Builder - constructs the JSON payload to send to Discord webhooks based on the embed data and optional Bible verse information.
@@ -121,6 +154,7 @@ async def send_embed_to_destinations(
     embed_id: str,
     user_discord_id: str,
     destinations: List[Dict[str, str]],
+    role_mentions: Any = None,
 ) -> Dict[str, Any]:
     """Deliver one saved embed to independently validated channel destinations."""
     embed = database_service.get_embed_by_id(embed_id)
@@ -169,7 +203,7 @@ async def send_embed_to_destinations(
                     if not webhook:
                         outcome["error"] = "No DailyBread webhook is configured for this channel."
                     else:
-                        delivery = await send_webhook(webhook, payload)
+                        delivery = await send_webhook(webhook, _payload_for_destination(payload, guild_id, role_mentions))
                         outcome.update({"success": bool(delivery.get("success")), "error": delivery.get("error")})
                         database_service.audit(
                             "embed.sent" if outcome["success"] else "embed.send_failed",
