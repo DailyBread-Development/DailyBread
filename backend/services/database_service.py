@@ -1,9 +1,3 @@
-"""PostgreSQL data access for DailyBread.
-
-All database access is kept here so callers remain independent of connection
-details.  The pool is opened lazily, allowing application startup without a
-database connection until a database-backed feature is used.
-"""
 import logging
 import os
 from datetime import datetime, timedelta, timezone

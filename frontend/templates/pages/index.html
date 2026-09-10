@@ -37,9 +37,11 @@
             <span>— {{ daily_verse.translation }}</span>
           </div>
         </div>
+        {% if daily_verse.image_url %}
         <div class="relative min-h-[220px] overflow-hidden border-t border-black/5 bg-bread-background md:border-l md:border-t-0">
-          <img src="{{ daily_image.url }}" alt="{{ daily_image.alt }}" class="h-full w-full object-cover">
+          <img src="{{ daily_verse.image_url }}" alt="YouVersion image for {{ daily_verse.reference }}" class="h-full w-full object-cover">
         </div>
+        {% endif %}
       </div>
       {% else %}
       <div class="p-6 sm:p-8 lg:p-10">
