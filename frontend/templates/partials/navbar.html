@@ -1,11 +1,11 @@
-<header class="sticky top-0 z-50 border-b border-black/5 bg-bread-cream/90 backdrop-blur-md">
-  <nav class="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8" aria-label="Primary navigation">
-    <a href="/" class="flex min-h-11 items-center gap-3">
+<header class="site-header sticky top-0 z-50">
+  <nav class="site-nav mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8" aria-label="Primary navigation">
+    <a href="/" class="brand-link" aria-label="DailyBread home">
       <img src="{{ url_for('static', path='images/DailyBread.svg') }}" alt="DailyBread" class="h-10 w-10 rounded-full object-cover border border-bread-gold/50 bg-bread-linen"/>
       <span class="text-lg font-extrabold tracking-wide">DailyBread</span>
     </a>
 
-    <div class="hidden items-center gap-1 md:flex">
+    <div class="primary-nav hidden items-center gap-1 md:flex">
       <a href="/" class="nav-link {{ 'is-active' if active_page == 'home' else '' }}">Home</a>
       {% if user %}
       <a href="/dashboard" class="nav-link {{ 'is-active' if active_page == 'dashboard' else '' }}">Dashboard</a>
@@ -21,6 +21,7 @@
         <button type="button" data-user-menu-toggle class="user-menu-trigger" aria-expanded="false" aria-haspopup="menu" aria-controls="user-menu-dropdown">
           <img src="{{ user.avatar_url or url_for('static', path='images/DailyBread.svg') }}" alt="{{ user.username }} avatar" class="h-8 w-8 rounded-full object-cover" />
           <span>{{ user.username }}</span>
+          <svg class="user-menu-chevron" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m5.5 7.5 4.5 4.5 4.5-4.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
         <div id="user-menu-dropdown" class="user-menu-dropdown" data-user-menu-dropdown role="menu" aria-label="User menu">
           <a href="/docs" role="menuitem" class="user-menu-item">Docs</a>
@@ -31,7 +32,7 @@
       <a href="/login" class="min-h-11 items-center justify-center rounded-full bg-bread-ink px-5 text-sm font-bold text-bread-cream transition hover:bg-black md:inline-flex">Login with Discord</a>
       {% endif %}
 
-      <button type="button" data-menu-toggle class="icon-button md:hidden" aria-label="Open menu" aria-expanded="false" aria-controls="mobile-menu">
+      <button type="button" data-menu-toggle class="icon-button md:hidden" aria-label="Open navigation menu" aria-expanded="false" aria-controls="mobile-menu">
         <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
         </svg>
@@ -39,12 +40,23 @@
     </div>
   </nav>
 
-  <div id="mobile-menu" data-mobile-menu class="hidden border-t border-black/5 px-4 pb-4 md:hidden">
+  <div id="mobile-menu" data-mobile-menu class="mobile-menu border-t border-black/5 px-4 pb-4 md:hidden" aria-hidden="true">
     <div class="mx-auto flex max-w-7xl flex-col gap-2 pt-3">
       <a href="/" class="mobile-nav-link {{ 'is-active' if active_page == 'home' else '' }}">Home</a>
       {% if user %}
       <a href="/dashboard" class="mobile-nav-link {{ 'is-active' if active_page == 'dashboard' else '' }}">Dashboard</a>
       <a href="/dashboard/builder" class="mobile-nav-link {{ 'is-active' if active_page == 'builder' else '' }}">Embed Builder</a>
+      <div class="mobile-user-menu">
+        <button type="button" data-mobile-user-menu-toggle class="mobile-user-trigger" aria-expanded="false" aria-controls="mobile-user-menu-dropdown">
+          <img src="{{ user.avatar_url or url_for('static', path='images/DailyBread.svg') }}" alt="{{ user.username }} avatar" class="h-8 w-8 rounded-full object-cover" />
+          <span>{{ user.username }}</span>
+          <svg class="user-menu-chevron" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m5.5 7.5 4.5 4.5 4.5-4.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div id="mobile-user-menu-dropdown" class="mobile-user-dropdown" data-mobile-user-menu-dropdown>
+          <a href="/docs" class="user-menu-item">Docs</a>
+          <a href="/logout" class="user-menu-item">Log Out</a>
+        </div>
+      </div>
       {% else %}
       <a href="/login" class="mobile-nav-link {{ 'is-active' if active_page == 'login' else '' }}">Login</a>
       <a href="/login" class="mt-2 flex min-h-12 items-center justify-center rounded-full bg-bread-ink px-5 text-sm font-bold text-bread-cream ">Login with Discord</a>

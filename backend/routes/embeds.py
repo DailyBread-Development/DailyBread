@@ -121,7 +121,7 @@ async def send_embed_route(embed_id: str, request: Request):
         if not all(isinstance(destination, dict) for destination in destinations):
             return _error("Invalid destination list.", status.HTTP_400_BAD_REQUEST)
 
-        result = await send_embed_to_destinations(embed_id, str(session["user"]["id"]), destinations)
+        result = await send_embed_to_destinations(embed_id, str(session["user"]["id"]), destinations, payload.get("role_mentions"))
         if result.get("total_destinations", 0) == 0:
             return _error("Select at least one unique channel destination.", status.HTTP_400_BAD_REQUEST)
         return result

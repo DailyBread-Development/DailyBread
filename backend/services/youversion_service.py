@@ -14,13 +14,7 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_TRANSLATIONS = ("NIV", "NLT", "NKJV")
 DEFAULT_TIMEZONE = "UTC"
-IMAGE_ASSETS = (
-    "scripture-desk.svg",
-    "DailyBread.svg",
-    "DailyBread_Bot_Image.svg",
-    "Discord.svg",
-    "dailybread-avatar.svg",
-)
+_DAILY_CONTENT_CACHE: dict[str, dict[str, Any]] = {}
 
 
 def _env_first(*names: str) -> str | None:
@@ -59,15 +53,7 @@ def get_translation_name(translation: str | None) -> str:
 
 
 def get_daily_verse_translation_options() -> list[str]:
-    configured = os.getenv("DAILY_VERSE_TRANSLATION", os.getenv("DEFAULT_TRANSLATION", "NIV")).strip().upper()
-    fallback = os.getenv("DAILY_VERSE_FALLBACK", os.getenv("DEFAULT_TRANSLATION_FALLBACK", "")).strip().upper()
-    options: list[str] = []
-    for item in (configured, fallback):
-        if item and item in SUPPORTED_TRANSLATIONS and item not in options:
-            options.append(item)
-    if not options:
-        options = ["NIV"]
-    return options
+    return ["NIV"]
 
 
 def get_daily_verse_timezone() -> ZoneInfo:
@@ -140,16 +126,6 @@ def _youversion_headers() -> dict[str, str]:
     return {"X-YVP-App-Key": app_key}
 
 
-def _translation_order(primary: str | None) -> list[str]:
-    ordered: list[str] = []
-    for candidate in [primary, os.getenv("DAILY_VERSE_FALLBACK", "")]:
-        if candidate and candidate.upper() in SUPPORTED_TRANSLATIONS and candidate.upper() not in ordered:
-            ordered.append(candidate.upper())
-    if not ordered:
-        ordered = list(get_daily_verse_translation_options())
-    return ordered
-
-
 def _decompose_reference_value(value: str | None) -> tuple[str, str]:
     if not value:
         return ("", "")
@@ -167,7 +143,25 @@ def _compose_reference_value(passage_id: str | None, display_reference: str | No
     return (display_reference or passage_id or "").strip()
 
 
-def _normalize_daily_verse(payload: dict[str, Any], date_text: str, translation_label: str, passage_id: str | None = None) -> dict[str, Any]:
+def _extract_image_url(payload: dict[str, Any]) -> str | None:
+    for key in ("image_url", "imageUrl", "image"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, dict):
+            nested_url = value.get("url") or value.get("image_url") or value.get("imageUrl")
+            if isinstance(nested_url, str) and nested_url.strip():
+                return nested_url.strip()
+    return None
+
+
+def _normalize_daily_verse(
+    payload: dict[str, Any],
+    date_text: str,
+    translation_label: str,
+    passage_id: str | None = None,
+    image_url: str | None = None,
+) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Invalid YouVersion response payload.")
     passage = payload.get("passage") if isinstance(payload.get("passage"), dict) else payload
@@ -193,6 +187,7 @@ def _normalize_daily_verse(payload: dict[str, Any], date_text: str, translation_
         "cache_key": build_daily_cache_key(date_text, translation_label),
         "translation_id": translation_id,
         "stored_reference": stored_reference,
+        "image_url": image_url,
     }
 
 
@@ -215,7 +210,13 @@ def _get_passage_for_translation(date_text: str, translation_label: str) -> dict
 
     passage_url = f"{base_url.rstrip('/')}/bibles/{translation_id}/passages/{passage_id}"
     passage_payload = _request_json(passage_url, _youversion_headers())
-    return _normalize_daily_verse(passage_payload, date_text, translation_label, passage_id)
+    return _normalize_daily_verse(
+        passage_payload,
+        date_text,
+        translation_label,
+        passage_id,
+        _extract_image_url(verse_of_day) or _extract_image_url(passage_payload),
+    )
 
 
 def _try_verse_for_translation(date_text: str, translation_label: str) -> dict[str, Any] | None:
@@ -229,29 +230,30 @@ def _try_verse_for_translation(date_text: str, translation_label: str) -> dict[s
 
 def get_today() -> dict[str, Any] | None:
     date_text = get_today_date_string()
-    configured_translation = os.getenv("DAILY_VERSE_TRANSLATION", os.getenv("DEFAULT_TRANSLATION", "NIV")).strip().upper()
-    fallback_translation = os.getenv("DAILY_VERSE_FALLBACK", os.getenv("DEFAULT_TRANSLATION_FALLBACK", "")).strip().upper()
+    configured_translation = "NIV"
+    fallback_translation = ""
 
     cache_key = build_daily_cache_key(date_text, configured_translation)
+    cached_content = _DAILY_CONTENT_CACHE.get(cache_key)
+    if cached_content:
+        return dict(cached_content)
+
     cached = get_bible_cache(cache_key)
     if cached and cached.get("text"):
         passage_id, display_reference = _decompose_reference_value(cached.get("reference"))
-        return {
+        result = {
             "reference": display_reference or cached.get("reference") or "Daily verse",
             "text": cached.get("text"),
-            "translation": (cached.get("translation") or configured_translation).upper(),
-            "translation_name": get_translation_name(cached.get("translation") or configured_translation),
+            "translation": "NIV",
+            "translation_name": get_translation_name("NIV"),
             "date": date_text,
             "passage_id": passage_id,
             "cache_key": cache_key,
         }
+        _DAILY_CONTENT_CACHE[cache_key] = result
+        return dict(result)
 
-    translation_order = []
-    for item in (configured_translation, fallback_translation):
-        if item and item.upper() in SUPPORTED_TRANSLATIONS and item.upper() not in translation_order:
-            translation_order.append(item.upper())
-    if not translation_order:
-        translation_order = ["NIV"]
+    translation_order = ["NIV"]
 
     last_error: Exception | None = None
     for translation_label in translation_order:
@@ -263,7 +265,15 @@ def get_today() -> dict[str, Any] | None:
                 result["text"],
                 result["translation"],
             )
-            return result
+            _DAILY_CONTENT_CACHE[cache_key] = result
+            logger.info(
+                "Daily verse provider: YouVersion; translation: NIV; reference: %s; image retrieved: %s",
+                result["reference"],
+                bool(result.get("image_url")),
+            )
+            if not result.get("image_url"):
+                logger.warning("Daily verse image retrieval failed: YouVersion returned no image URL.")
+            return dict(result)
         last_error = RuntimeError(f"Failed to fetch daily verse for {translation_label}.")
         if translation_label != configured_translation:
             logger.warning("Falling back from %s to %s for the daily verse because the primary YouVersion lookup did not succeed.", configured_translation, translation_label)
@@ -275,28 +285,19 @@ def get_today() -> dict[str, Any] | None:
     if recent and recent.get('text'):
         passage_id, display_reference = _decompose_reference_value(recent.get("reference"))
         cached_date = recent.get("cache_key", "").split(":", 2)[1] if ":" in recent.get("cache_key", "") else date_text
-        return {
+        result = {
             "reference": display_reference or recent.get("reference") or "Daily verse",
             "text": recent.get("text"),
-            "translation": (recent.get("translation") or configured_translation).upper(),
-            "translation_name": get_translation_name(recent.get("translation") or configured_translation),
+            "translation": "NIV",
+            "translation_name": get_translation_name("NIV"),
             "date": cached_date,
             "passage_id": passage_id,
             "cache_key": recent.get("cache_key") or cache_key,
         }
+        _DAILY_CONTENT_CACHE[cache_key] = result
+        return dict(result)
 
     return None
-
-
-def get_daily_image_for_date(date_text: str | None = None) -> dict[str, str]:
-    target_date = date_text or get_today_date_string()
-    index = abs(sum(ord(ch) for ch in target_date)) % len(IMAGE_ASSETS)
-    filename = IMAGE_ASSETS[index]
-    return {
-        "filename": filename,
-        "url": f"/static/images/{filename}",
-        "alt": f"DailyBread visual for {target_date}",
-    }
 
 
 def get_latest_daily_verse_cache() -> dict[str, Any] | None:

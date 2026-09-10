@@ -129,7 +129,6 @@ async def landing_page(
         return oauth_callback(request, code, state)
 
     daily_verse = youversion_service.get_today()
-    daily_image = youversion_service.get_daily_image_for_date(daily_verse["date"] if daily_verse else None)
 
     return templates.TemplateResponse(
         request,
@@ -138,7 +137,6 @@ async def landing_page(
             "page_title": "DailyBread",
             "active_page": "home",
             "daily_verse": daily_verse,
-            "daily_image": daily_image,
         }),
     )
 # pylint: disable=invalid-name

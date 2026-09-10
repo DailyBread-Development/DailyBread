@@ -54,6 +54,11 @@
         </div>
       </div>
 
+      <label class="mt-6 block">
+        <span class="sr-only">Search channels</span>
+        <input id="channel-search" type="search" placeholder="Search channels..." autocomplete="off" class="w-full rounded-2xl border border-black/10 bg-bread-background px-4 py-3 text-sm text-bread-ink outline-none transition focus:border-bread-gold focus:ring-4 focus:ring-bread-gold/15" />
+      </label>
+
       <div id="channel-list" class="mt-6 space-y-3"></div>
 
       <div class="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -100,6 +105,7 @@ const channelStep = document.getElementById('channel-step');
 const reviewStep = document.getElementById('review-step');
 const guildStep = document.getElementById('guild-step');
 const channelList = document.getElementById('channel-list');
+const channelSearch = document.getElementById('channel-search');
 const channelGuildName = document.getElementById('channel-guild-name');
 const totalDestinationCount = document.getElementById('total-destination-count');
 const reviewList = document.getElementById('review-list');
@@ -251,6 +257,7 @@ function renderGuilds() {
     button.textContent = configured ? 'Edit this server' : 'Select this server';
     button.addEventListener('click', async () => {
       state.currentGuildId = guild.id;
+      channelSearch.value = '';
       await loadChannels(guild.id);
       setChannelView(guild.id);
     });
@@ -266,7 +273,7 @@ function flattenSelections() {
     const channelIds = state.selectionsByGuild[guildId] || [];
     channelIds.forEach((channelId) => {
       if (!channelId) return;
-      destinations.push({ guild_id: guildId, channel_id: String(channelId) });
+      destinations.push({ guild_id: guildId, guild_name: state.guilds.get(guildId)?.name || '', channel_id: String(channelId) });
     });
   });
   return destinations;
@@ -363,7 +370,15 @@ function setChannelView(guildId) {
   }
 
   const selectedSet = new Set(selected);
-  channels.forEach((channel) => {
+  const query = channelSearch.value.trim().toLowerCase();
+  const visibleChannels = channels.filter((channel) => !query || String(channel.name || '').toLowerCase().includes(query));
+  if (!visibleChannels.length) {
+    const empty = document.createElement('p');
+    empty.className = 'text-sm text-bread-muted';
+    empty.textContent = 'No channels match your search.';
+    channelList.append(empty);
+  }
+  visibleChannels.forEach((channel) => {
     const row = document.createElement('label');
     row.className = 'flex cursor-pointer items-center justify-between gap-3 rounded-2xl border border-black/10 bg-bread-background px-4 py-3';
     const label = document.createElement('span');
@@ -402,6 +417,14 @@ function setChannelView(guildId) {
   channelContinueButton.disabled = !selected.length;
   setView('channel');
 }
+
+channelSearch.addEventListener('input', () => {
+  const currentGuildId = state.currentGuildId;
+  if (!currentGuildId) return;
+  const query = channelSearch.value;
+  setChannelView(currentGuildId);
+  channelSearch.value = query;
+});
 
 function saveCurrentGuildSelection() {
   if (!state.currentGuildId) return;

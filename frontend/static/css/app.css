@@ -105,46 +105,145 @@ button {
    3. REFACTORED COMPONENT RULES
    ========================================== */
 
-/* --- Navigation Links --- */
+/* --- Shared navigation --- */
+.site-header {
+  border-bottom: 1px solid rgb(43 37 32 / 0.08);
+  background: rgb(255 253 249 / 0.92);
+  backdrop-filter: blur(14px);
+}
+
+.site-nav {
+  min-height: 4.5rem;
+}
+
+.brand-link {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.7rem;
+  border-radius: 0.7rem;
+  color: var(--color-text);
+  text-decoration: none;
+  transition: opacity 160ms ease;
+}
+
+.brand-link:hover {
+  opacity: 0.78;
+}
+
+.primary-nav {
+  margin-inline: auto;
+  padding-inline: 1.5rem;
+}
+
 .nav-link {
   min-height: 2.75rem;
-  border-radius: 999px;
-  padding: 0.75rem 1rem;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 0.6rem;
+  padding: 0.65rem 0.85rem;
   font-size: 0.875rem;
   font-weight: 800;
   color: var(--nav-text-color);
-  transition: color 160ms ease, background 160ms ease;
+  text-decoration: none;
+  transition: color 160ms ease, background-color 160ms ease;
 }
 
-.nav-link:hover,
-.nav-link.is-active {
+.nav-link:hover {
   background: var(--nav-hover-bg);
+  color: var(--nav-hover-text);
+}
+
+.nav-link.is-active {
+  background: var(--nav-active-bg);
+  box-shadow: inset 0 -2px 0 var(--color-accent);
   color: var(--nav-hover-text);
 }
 
 .mobile-nav-link,
 .dashboard-nav-link {
   min-height: 2.75rem;
-  border-radius: 1rem;
+  border-radius: 0.65rem;
   display: flex;
   align-items: center;
   padding: 0.75rem 1rem;
   font-size: 0.875rem;
   font-weight: 800;
   color: var(--nav-text-color);
+  text-decoration: none;
+  transition: color 160ms ease, background-color 160ms ease;
 }
 
+.mobile-nav-link:hover,
+.dashboard-nav-link:hover,
 .mobile-nav-link.is-active,
 .dashboard-nav-link.is-active {
   background: var(--nav-active-bg);
   color: var(--nav-hover-text);
 }
 
+.mobile-nav-link.is-active,
+.dashboard-nav-link.is-active {
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
+.mobile-menu {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height 200ms ease, opacity 160ms ease;
+}
+
+.mobile-menu.is-open {
+  max-height: 24rem;
+  opacity: 1;
+}
+
+.mobile-user-menu {
+  border-top: 1px solid rgb(43 37 32 / 0.08);
+  padding-top: 0.5rem;
+}
+
+.mobile-user-trigger {
+  display: flex;
+  width: 100%;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.65rem;
+  border: 0;
+  border-radius: 0.65rem;
+  padding: 0.4rem 0.55rem 0.4rem 0.4rem;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 0.875rem;
+  font-weight: 800;
+  text-align: left;
+}
+
+.mobile-user-trigger:hover,
+.mobile-user-trigger:focus-visible {
+  background: var(--color-hover);
+}
+
+.mobile-user-trigger .user-menu-chevron {
+  margin-left: auto;
+}
+
+.mobile-user-dropdown {
+  display: none;
+  margin-top: 0.25rem;
+  padding-left: 1rem;
+}
+
+.mobile-user-menu.is-open .mobile-user-dropdown {
+  display: block;
+}
+
 /* --- Buttons --- */
 .icon-button {
   min-height: 2.75rem;
   min-width: 2.75rem;
-  border-radius: 999px;
+  border-radius: 0.65rem;
   display: inline-grid;
   place-items: center;
   border: 1px solid var(--icon-border);
@@ -155,6 +254,11 @@ button {
 .icon-button:hover {
   background: var(--icon-hover-bg);
   border-color: var(--icon-hover-border);
+}
+
+.icon-button[aria-expanded="true"] {
+  background: var(--icon-hover-bg);
+  border-color: var(--color-accent);
 }
 
 .user-menu-trigger {
@@ -169,13 +273,24 @@ button {
   color: var(--color-text);
   font-size: 0.875rem;
   font-weight: 800;
-  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+  transition: border-color 160ms ease, background 160ms ease;
 }
 
 .user-menu-trigger:hover,
 .user-menu-trigger:focus-visible {
   border-color: var(--color-accent);
   background: var(--color-hover);
+}
+
+.user-menu-chevron {
+  height: 1rem;
+  width: 1rem;
+  color: var(--color-text-secondary);
+  transition: transform 160ms ease;
+}
+
+.is-open .user-menu-chevron {
+  transform: rotate(180deg);
 }
 
 .user-menu-dropdown {
@@ -196,9 +311,12 @@ button {
   transition: opacity 150ms ease, transform 150ms ease;
 }
 
+.user-menu-dropdown {
+  margin-top: 0.55rem;
+}
+
 .is-open .user-menu-dropdown,
-[data-user-menu]:hover .user-menu-dropdown,
-[data-user-menu]:focus-within .user-menu-dropdown {
+[data-user-menu]:hover .user-menu-dropdown {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0) scale(1);
@@ -219,6 +337,34 @@ button {
 .user-menu-item:hover,
 .user-menu-item:focus-visible {
   background: var(--color-hover);
+}
+
+.nav-link:focus-visible,
+.mobile-nav-link:focus-visible,
+.brand-link:focus-visible,
+.user-menu-trigger:focus-visible,
+.icon-button:focus-visible {
+  outline: 2px solid var(--color-accent) !important;
+  outline-offset: 3px !important;
+}
+
+@media (max-width: 30rem) {
+  .site-nav {
+    padding-inline: 1rem;
+  }
+
+  .brand-link {
+    gap: 0.55rem;
+  }
+
+  .brand-link img {
+    height: 2.25rem;
+    width: 2.25rem;
+  }
+
+  .brand-link span {
+    font-size: 0.95rem;
+  }
 }
 
 .docs-shell {
@@ -505,6 +651,39 @@ button:disabled,
 }
 
 /* End force-light overrides */
+
+/* Keep the shared navbar controls above the broad form/button safeguards. */
+.site-header .icon-button {
+  background: transparent !important;
+  color: var(--color-text) !important;
+}
+
+.site-header .icon-button:hover,
+.site-header .icon-button[aria-expanded="true"] {
+  background: var(--icon-hover-bg) !important;
+  border-color: var(--color-accent) !important;
+}
+
+.site-header .user-menu-trigger {
+  background: var(--color-surface) !important;
+  color: var(--color-text) !important;
+}
+
+.site-header .user-menu-trigger:hover,
+.site-header .user-menu-trigger:focus-visible {
+  background: var(--color-hover) !important;
+  border-color: var(--color-accent) !important;
+}
+
+.site-header a.inline-flex {
+  background: var(--color-text) !important;
+  border-color: var(--color-text) !important;
+  color: var(--color-surface) !important;
+}
+
+.site-header a.inline-flex:hover {
+  background: #171310 !important;
+}
 
 /* Discord-style embed preview */
 .discord-preview-shell { font-family: "gg sans", "Noto Sans", "Helvetica Neue", Helvetica, Arial, sans-serif; }

@@ -2,9 +2,13 @@
   const names = { members: new Map(), roles: new Map() };
   const cache = new Map();
   let menu = null; let activeInput = null; let results = []; let selectedIndex = 0; let requestToken = 0;
-  const guildId = () => document.getElementById("container-guild")?.value || document.getElementById("select-guild")?.value || "";
+  const guildId = () => document.getElementById("container-guild")?.value || document.getElementById("select-guild")?.value || window.DailyBreadMentionGuilds?.[0]?.id || "";
+  const mentionGuilds = () => {
+    const configured = Array.isArray(window.DailyBreadMentionGuilds) ? window.DailyBreadMentionGuilds : [];
+    return configured.length ? configured : [{ id: guildId(), name: "Current server" }];
+  };
   const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
-  const cacheKey = (type, query) => `${guildId()}:${type}:${query.toLowerCase()}`;
+  const cacheKey = (type, query) => `${mentionGuilds().map((guild) => guild.id).join(",")}:${type}:${query.toLowerCase()}`;
   function close() { menu?.remove(); menu = null; activeInput = null; results = []; }
   function currentMention(input) {
     const before = input.value.slice(0, input.selectionStart ?? input.value.length);
@@ -18,7 +22,9 @@
     if (!menu) return;
     menu.innerHTML = results.length ? results.map((item, index) => {
       const name = item.display_name || item.name;
-      const secondary = item.username && item.username !== name ? `<span class="dailybread-mention-secondary">@${escapeHtml(item.username)}</span>` : "";
+      const secondary = item.guild_name
+        ? `<span class="dailybread-mention-secondary">${escapeHtml(item.guild_name)}</span>`
+        : item.username && item.username !== name ? `<span class="dailybread-mention-secondary">@${escapeHtml(item.username)}</span>` : "";
       const marker = item.avatar_url ? `<img src="${escapeHtml(item.avatar_url)}" alt="" class="dailybread-mention-avatar">` : `<span class="dailybread-mention-role" style="background:${item.color ? `#${Number(item.color).toString(16).padStart(6, "0")}` : "#c9b27a"}"></span>`;
       return `<button type="button" class="dailybread-mention-option${index === selectedIndex ? " is-selected" : ""}" data-index="${index}">${marker}<span class="dailybread-mention-label"><strong>${escapeHtml(name)}</strong>${secondary}</span></button>`;
     }).join("") : '<div class="dailybread-mention-empty">No matches</div>';
@@ -28,10 +34,15 @@
   async function search(type, query) {
     const key = cacheKey(type, query);
     if (cache.has(key)) return cache.get(key);
-    const response = await fetch(`/api/guilds/${encodeURIComponent(guildId())}/${type}/search?q=${encodeURIComponent(query)}`);
-    const data = await response.json();
-    if (!response.ok || !data.success) throw new Error(data.error || "Mention search failed.");
-    const found = data[type] || []; cache.set(key, found);
+    const found = [];
+    for (const guild of mentionGuilds()) {
+      const response = await fetch(`/api/guilds/${encodeURIComponent(guild.id)}/${type}/search?q=${encodeURIComponent(query)}`);
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || "Mention search failed.");
+      (data[type] || []).forEach((item) => found.push({ ...item, guild_id: String(guild.id), guild_name: guild.name }));
+    }
+    found.sort((left, right) => String(left.name || left.display_name || "").localeCompare(String(right.name || right.display_name || "")));
+    cache.set(key, found);
     found.forEach((item) => (type === "roles" ? names.roles.set(String(item.id), item.name) : names.members.set(String(item.id), item.display_name || item.username)));
     return found;
   }
@@ -50,6 +61,11 @@
   function choose(index) {
     const mention = activeInput && currentMention(activeInput); const item = results[index]; if (!mention || !item) return close();
     const replacement = mention.type === "roles" ? `<@&${item.id}>` : `<@${item.id}>`; const end = activeInput.selectionStart ?? activeInput.value.length;
+    if (mention.type === "roles") {
+      window.DailyBreadMentionSelections = window.DailyBreadMentionSelections || [];
+      window.DailyBreadMentionSelections = window.DailyBreadMentionSelections.filter((selected) => selected.id !== String(item.id) || selected.guild_id !== String(item.guild_id));
+      window.DailyBreadMentionSelections.push({ type: "role", id: String(item.id), guild_id: String(item.guild_id), role_name: item.name });
+    }
     activeInput.value = `${activeInput.value.slice(0, mention.start)}${replacement}${activeInput.value.slice(end)}`;
     activeInput.setSelectionRange(mention.start + replacement.length, mention.start + replacement.length); activeInput.dispatchEvent(new Event("input", { bubbles: true })); close();
   }
