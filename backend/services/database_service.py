@@ -244,14 +244,14 @@ def get_container_for_user(container_id: str, user_uuid: str) -> Optional[dict[s
 
 
 def create_webhook_record(webhook: dict[str, Any]) -> dict[str, Any]:
-    row = _fetch_one("""SELECT g.id AS guild_id, c.id AS channel_id FROM guilds g JOIN channels c ON c.guild_id = g.id
+    row = _fetch_one("""SELECT g.id AS guild_id, c.id AS channel_id, c.name AS channel_name FROM guilds g JOIN channels c ON c.guild_id = g.id
         WHERE g.discord_id = %s AND c.discord_id = %s LIMIT 1""", (webhook["guild_id"], webhook["channel_id"]))
     if not row:
         raise DatabaseError("Webhook target is not synchronized by the bot.")
     result = _fetch_one("""INSERT INTO webhooks (guild_id, channel_id, discord_webhook_id, token, name, enabled)
         VALUES (%s, %s, %s, %s, %s, TRUE) ON CONFLICT (discord_webhook_id) DO UPDATE SET guild_id = EXCLUDED.guild_id,
         channel_id = EXCLUDED.channel_id, token = EXCLUDED.token, name = EXCLUDED.name, enabled = EXCLUDED.enabled RETURNING *""",
-        (row["guild_id"], row["channel_id"], webhook["id"], webhook["token"], webhook.get("name") or "DailyBread"))
+        (row["guild_id"], row["channel_id"], webhook["id"], webhook["token"], row["channel_name"] or "dailybread"))
     assert result is not None
     return result
 

@@ -3,6 +3,7 @@ import logging
 import os
 import time
 from datetime import datetime
+from html.parser import HTMLParser
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
@@ -15,6 +16,21 @@ logger = logging.getLogger(__name__)
 SUPPORTED_TRANSLATIONS = ("NIV", "NLT", "NKJV")
 DEFAULT_TIMEZONE = "UTC"
 _DAILY_CONTENT_CACHE: dict[str, dict[str, Any]] = {}
+
+
+class _OpenGraphImageParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.image_url: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "meta" or self.image_url:
+            return
+        attributes = {key.lower(): value for key, value in attrs}
+        if attributes.get("property", "").lower() == "og:image":
+            content = attributes.get("content")
+            if content and content.strip():
+                self.image_url = content.strip()
 
 
 def _env_first(*names: str) -> str | None:
@@ -155,6 +171,20 @@ def _extract_image_url(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def _resolve_daily_verse_image() -> str | None:
+    try:
+        response = requests.get("https://www.bible.com/verse-of-the-day", timeout=15)
+        response.raise_for_status()
+        parser = _OpenGraphImageParser()
+        parser.feed(response.text)
+        if parser.image_url:
+            logger.info("Daily verse image resolved successfully")
+        return parser.image_url
+    except Exception as exc:  # pragma: no cover - external service failure
+        logger.warning("Failed to resolve YouVersion daily verse image: %s", exc)
+        return None
+
+
 def _normalize_daily_verse(
     payload: dict[str, Any],
     date_text: str,
@@ -240,6 +270,7 @@ def get_today() -> dict[str, Any] | None:
 
     cached = get_bible_cache(cache_key)
     if cached and cached.get("text"):
+        image_url = _resolve_daily_verse_image()
         passage_id, display_reference = _decompose_reference_value(cached.get("reference"))
         result = {
             "reference": display_reference or cached.get("reference") or "Daily verse",
@@ -249,6 +280,7 @@ def get_today() -> dict[str, Any] | None:
             "date": date_text,
             "passage_id": passage_id,
             "cache_key": cache_key,
+            "image_url": image_url,
         }
         _DAILY_CONTENT_CACHE[cache_key] = result
         return dict(result)
@@ -283,6 +315,7 @@ def get_today() -> dict[str, Any] | None:
 
     recent = get_latest_daily_verse_cache()
     if recent and recent.get('text'):
+        image_url = _resolve_daily_verse_image()
         passage_id, display_reference = _decompose_reference_value(recent.get("reference"))
         cached_date = recent.get("cache_key", "").split(":", 2)[1] if ":" in recent.get("cache_key", "") else date_text
         result = {
@@ -293,6 +326,7 @@ def get_today() -> dict[str, Any] | None:
             "date": cached_date,
             "passage_id": passage_id,
             "cache_key": recent.get("cache_key") or cache_key,
+            "image_url": image_url,
         }
         _DAILY_CONTENT_CACHE[cache_key] = result
         return dict(result)

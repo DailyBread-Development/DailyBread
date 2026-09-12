@@ -270,10 +270,7 @@ async def create_channel_webhook(guild_id: str, channel_id: str, request: Reques
         )
 
     try:
-        channel_name_row = database_service.get_channel_by_discord_id(channel_id)
-        channel_label = (channel_name_row.get("name") if channel_name_row else None) or "dailybread"
-        webhook_name = str(channel_label).strip().lstrip("#").replace(" ", "-").lower()
-        webhook = discord_service.create_webhook(channel_id, webhook_name or "dailybread")
+        webhook = discord_service.create_webhook(channel_id)
     except RuntimeError as exc:
         return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
 
