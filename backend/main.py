@@ -2,12 +2,13 @@ import logging  # noqa: I001
 import os
 import secrets
 import traceback
+from pathlib import Path
 from typing import Any
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -28,7 +29,14 @@ from backend.auth import (
     fetch_discord_guilds,
     fetch_discord_user,
 )
-from backend.config import DOCS_DIR, STATIC_DIR, TEMPLATES_DIR
+from backend.config import (
+    DEVELOPMENT_GUILD_ID,
+    DOCS_DIR,
+    STAFF_DOCUMENTS,
+    STAFF_DOCUMENT_ROLES,
+    STATIC_DIR,
+    TEMPLATES_DIR,
+)
 from backend.routes import router as routes_router
 from backend.services import discord_service, database_service, youversion_service
 from backend.services.media_service import get_media_storage_dir
@@ -54,6 +62,122 @@ def _load_docs_file(filename: str) -> str:
     if not file_path.exists():
         return "<p class=\"docs-placeholder\">This document could not be found.</p>"
     return file_path.read_text(encoding="utf-8")
+
+
+def _load_staff_document_asset(slug: str) -> str | None:
+    document = next((doc for doc in STAFF_DOCUMENTS if doc["slug"] == slug), None)
+    if document is None:
+        return None
+
+    candidates = [
+        DOCS_DIR / "staff_guides" / document["asset_name"],
+        DOCS_DIR / "staff_guides" / slug,
+        DOCS_DIR / "staff_guides" / f"{slug}.svg",
+        DOCS_DIR / "staff_guides" / f"{document['title']}.svg",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def _get_staff_document_by_slug(slug: str) -> dict | None:
+    return next((doc for doc in STAFF_DOCUMENTS if doc["slug"] == slug), None)
+
+
+def _ensure_development_guild_sync_for_user(user_record: dict[str, Any], access_token: str) -> None:
+    try:
+        guilds_data = fetch_discord_guilds(access_token)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Discord guild sync failed while checking staff access user_id=%s error=%s", user_record["id"], exc)
+        raise
+
+    guild_match = next((guild for guild in guilds_data if str(guild.get("id", "")) == DEVELOPMENT_GUILD_ID), None)
+    if guild_match is None:
+        return
+
+    guild_id = str(guild_match.get("id", ""))
+    is_owner = guild_match.get("owner") is True
+    permissions = int(guild_match.get("permissions", 0) or 0)
+    is_admin = is_owner or ((permissions & 0x8) == 0x8)
+
+    db_guild = database_service.upsert_guild(
+        guild_id,
+        guild_match.get("name", "Development"),
+        guild_match.get("icon"),
+        str(user_record["discord_id"]) if is_owner else None,
+        discord_service.is_bot_in_guild(guild_id),
+    )
+    guild_member = database_service.upsert_guild_member(db_guild["id"], user_record["id"], is_owner, is_admin)
+
+    guild_roles = discord_service.list_guild_roles(guild_id)
+    if guild_roles:
+        role_rows = [
+            {
+                "discord_role_id": str(role.get("id") or ""),
+                "name": str(role.get("name") or "Role"),
+                "color": int(role.get("color", 0) or 0),
+                "position": int(role.get("position", 0) or 0),
+                "permissions": int(role.get("permissions", 0) or 0),
+            }
+            for role in guild_roles
+        ]
+        if role_rows:
+            database_service.upsert_roles(guild_id, role_rows)
+
+    member_roles_payload = discord_service.get_guild_member(guild_id, str(user_record["discord_id"]))
+    member_role_ids = []
+    for role_id in member_roles_payload.get("roles", []):
+        role_row = database_service.get_role_by_discord_id(guild_id, str(role_id))
+        if role_row and role_row.get("id"):
+            member_role_ids.append(str(role_row["id"]))
+    database_service.replace_member_roles(guild_member["id"], member_role_ids)
+
+
+def _get_authorized_staff_documents_for_session(session: dict[str, Any]) -> list[dict]:
+    if not session or not session.get("user"):
+        return []
+
+    try:
+        user_record = database_service.get_user_by_discord_id(str(session["user"]["id"]))
+        if not user_record:
+            return []
+
+        oauth_session = database_service.get_latest_oauth_session(user_record["id"])
+        if not oauth_session or not oauth_session.get("access_token"):
+            return []
+
+        _ensure_development_guild_sync_for_user(user_record, oauth_session["access_token"])
+
+        guild = database_service.get_guild_by_discord_id(DEVELOPMENT_GUILD_ID)
+        if guild is None:
+            return []
+
+        member_row = database_service.get_guild_member_for_user(guild["id"], user_record["id"])
+        if member_row is None:
+            return []
+
+        authorized_role_ids = {
+            str(role["discord_role_id"]) if role.get("discord_role_id") is not None else str(role["id"])
+            for role in database_service.get_member_role_mapping_for_user(user_record["id"], DEVELOPMENT_GUILD_ID)
+        }
+
+        authorized_docs = []
+        for document in STAFF_DOCUMENTS:
+            if document["role_id"] in authorized_role_ids:
+                authorized_docs.append(document)
+        return authorized_docs
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Staff docs authorization failed for Discord user=%s error=%s", session.get("user", {}).get("id"), exc)
+        return []
+
+
+def is_user_authorized_for_staff_guide(session: dict[str, Any], slug: str) -> bool:
+    return any(document["slug"] == slug for document in _get_authorized_staff_documents_for_session(session))
+
+
+def get_staff_documents_for_session(session: dict[str, Any]) -> list[dict]:
+    return _get_authorized_staff_documents_for_session(session)
 
 
 def _is_api_request(request: Request) -> bool:
@@ -291,6 +415,7 @@ async def docs_home_page(request: Request) -> HTMLResponse:
     if not session:
         return RedirectResponse(url="/login")
 
+    staff_docs = get_staff_documents_for_session(session)
     return templates.TemplateResponse(
         request,
         "pages/docs.html",
@@ -298,8 +423,61 @@ async def docs_home_page(request: Request) -> HTMLResponse:
             "page_title": "Documentation - DailyBread",
             "active_page": "docs",
             "user": session["user"],
+            "staff_documents": staff_docs,
         }),
     )
+
+
+@app.get("/docs/staff/{slug}", response_class=HTMLResponse)
+async def docs_staff_guide_page(request: Request, slug: str) -> HTMLResponse:
+    session = get_session(request)
+    if not session:
+        return RedirectResponse(url="/login")
+
+    document = _get_staff_document_by_slug(slug)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Staff guide not found.")
+
+    if not is_user_authorized_for_staff_guide(session, slug):
+        raise HTTPException(status_code=403, detail="You are not authorized to view this staff guide.")
+
+    asset_path = _load_staff_document_asset(slug)
+    if asset_path is None:
+        document_body = "<p class=\"docs-placeholder\">This staff guide has not been added yet.</p>"
+        asset_url = None
+    else:
+        asset_url = f"/docs/staff-assets/{Path(asset_path).name}"
+        document_body = f'<img src="{asset_url}" alt="{document["title"]}" class="docs-svg-document" draggable="false" />'
+
+    return templates.TemplateResponse(
+        request,
+        "pages/docs-detail.html",
+        build_template_context(request, {
+            "page_title": f"{document['title']} - DailyBread",
+            "active_page": "docs",
+            "user": session["user"],
+            "document_title": document["title"],
+            "last_updated": None,
+            "document_body": document_body,
+        }),
+    )
+
+
+@app.get("/docs/staff-assets/{filename}")
+async def docs_staff_asset(request: Request, filename: str) -> Any:
+    session = get_session(request)
+    if not session:
+        return RedirectResponse(url="/login")
+
+    slug = filename.rsplit(".", 1)[0]
+    if not is_user_authorized_for_staff_guide(session, slug):
+        raise HTTPException(status_code=403, detail="You are not authorized to access this staff guide asset.")
+
+    asset_path = _load_staff_document_asset(slug)
+    if asset_path is None:
+        raise HTTPException(status_code=404, detail="Staff guide asset not found.")
+
+    return FileResponse(asset_path, media_type="image/svg+xml")
 
 
 @app.get("/docs/help", response_class=HTMLResponse)

@@ -5,7 +5,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
-from cairosvg import svg2png
+
+try:
+    from cairosvg import svg2png
+except Exception:  # pragma: no cover - native Cairo dependency may be absent in some environments
+    svg2png = None
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
 BOT_TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("discord_token") or os.getenv("DISCORD_BOT_TOKEN")
@@ -21,6 +25,11 @@ _GUILD_CACHE_TTL = 60
 
 def _dailybread_avatar_data_uri() -> str:
     logo_path = Path(__file__).resolve().parents[2] / "frontend" / "static" / "images" / "DailyBread.svg"
+    if svg2png is None:
+        with logo_path.open("rb") as image_file:
+            svg_bytes = image_file.read()
+        encoded = base64.b64encode(svg_bytes).decode("ascii")
+        return f"data:image/svg+xml;base64,{encoded}"
     png_logo = svg2png(bytestring=logo_path.read_bytes(), output_width=256, output_height=256)
     return f"data:image/png;base64,{base64.b64encode(png_logo).decode('ascii')}"
 
@@ -81,6 +90,10 @@ def list_guild_roles(guild_id: str) -> List[Dict[str, Any]]:
     roles = _request("GET", f"/guilds/{guild_id}/roles")
     _guild_role_cache[str(guild_id)] = (time.monotonic(), roles)
     return roles
+
+
+def get_guild_member(guild_id: str, user_id: str) -> Dict[str, Any]:
+    return _request("GET", f"/guilds/{guild_id}/members/{user_id}")
 
 
 def list_guild_members(guild_id: str) -> List[Dict[str, Any]]:

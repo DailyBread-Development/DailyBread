@@ -380,6 +380,18 @@ button {
   margin-bottom: 2rem;
 }
 
+.docs-section-header {
+  margin-top: 3rem;
+  margin-bottom: 1rem;
+}
+
+.docs-section-title {
+  margin-top: 0.5rem;
+  font-size: clamp(1.5rem, 2vw, 2.2rem);
+  font-weight: 800;
+  color: var(--color-text);
+}
+
 .docs-kicker {
   display: inline-block;
   font-size: 0.72rem;
@@ -491,6 +503,19 @@ button {
   margin: 0;
   color: var(--color-text-secondary);
   font-size: 1rem;
+}
+
+.docs-svg-document {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  border-radius: 1rem;
+  border: 1px solid var(--color-border);
+  background: white;
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
 }
 
 main > * {

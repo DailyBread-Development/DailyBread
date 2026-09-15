@@ -29,11 +29,19 @@ CREATE TABLE IF NOT EXISTS public.guilds (
     CONSTRAINT guilds_discord_id_key UNIQUE (discord_id)
 ) TABLESPACE pg_default;
 
--- Added Placeholder for missing dependency table
 CREATE TABLE IF NOT EXISTS public.roles (
     id uuid NOT NULL DEFAULT gen_random_uuid(),
+    guild_id uuid NOT NULL,
+    discord_role_id bigint NOT NULL,
     name text NOT NULL,
-    CONSTRAINT roles_pkey PRIMARY KEY (id)
+    color integer NULL DEFAULT 0,
+    position integer NULL DEFAULT 0,
+    permissions bigint NULL DEFAULT 0,
+    created_at timestamp without time zone NULL DEFAULT now(),
+    updated_at timestamp without time zone NULL DEFAULT now(),
+    CONSTRAINT roles_pkey PRIMARY KEY (id),
+    CONSTRAINT roles_guild_id_discord_role_id_key UNIQUE (guild_id, discord_role_id),
+    CONSTRAINT roles_guild_id_fkey FOREIGN KEY (guild_id) REFERENCES public.guilds (id) ON DELETE CASCADE
 ) TABLESPACE pg_default;
 
 -- 3. Dependent Tables (Level 1 Dependencies)

@@ -133,6 +133,24 @@ def get_user_guilds(user_uuid: str) -> list[dict[str, Any]]:
     return [{"id": str(row["discord_id"]), "guild_id": str(row["discord_id"]), "name": row["name"], "icon": row["icon"], "has_bot": row["has_bot"], "is_owner": row["is_owner"], "is_admin": row["is_admin"], "owner_id": str(row["owner_discord_id"]) if row["owner_discord_id"] else None} for row in rows]
 
 
+def get_guild_member_for_user(guild_uuid: str, user_uuid: str) -> Optional[dict[str, Any]]:
+    return _fetch_one("SELECT * FROM guild_members WHERE guild_id = %s AND user_id = %s LIMIT 1", (guild_uuid, user_uuid))
+
+
+def get_role_by_discord_id(guild_discord_id: str, discord_role_id: str) -> Optional[dict[str, Any]]:
+    return _fetch_one("""SELECT r.* FROM roles r JOIN guilds g ON g.id = r.guild_id
+        WHERE g.discord_id = %s AND r.discord_role_id = %s LIMIT 1""", (guild_discord_id, discord_role_id))
+
+
+def get_member_role_mapping_for_user(user_uuid: str, guild_discord_id: str) -> list[dict[str, Any]]:
+    return _fetch_all("""SELECT r.*
+        FROM member_roles mr
+        JOIN guild_members gm ON gm.id = mr.guild_member_id
+        JOIN guilds g ON g.id = gm.guild_id
+        JOIN roles r ON r.id = mr.role_id
+        WHERE gm.user_id = %s AND g.discord_id = %s""", (user_uuid, guild_discord_id))
+
+
 def upsert_channels(guild_discord_id: str, channels: list[dict[str, Any]]) -> list[dict[str, Any]]:
     guild = get_guild_by_discord_id(guild_discord_id)
     if not guild:
