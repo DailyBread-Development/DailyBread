@@ -118,22 +118,26 @@ def _ensure_development_guild_sync_for_user(user_record: dict[str, Any], access_
     )
     guild_member = database_service.upsert_guild_member(db_guild["id"], user_record["id"], is_owner, is_admin)
 
-    guild_roles = discord_service.list_guild_roles(guild_id)
-    if guild_roles:
-        role_rows = [
-            {
-                "discord_role_id": str(role.get("id") or ""),
-                "name": str(role.get("name") or "Role"),
-                "color": int(role.get("color", 0) or 0),
-                "position": int(role.get("position", 0) or 0),
-                "permissions": int(role.get("permissions", 0) or 0),
-            }
-            for role in guild_roles
-        ]
-        if role_rows:
-            database_service.upsert_roles(guild_id, role_rows)
+    _sync_user_roles(guild_id, guild_member, str(user_record["discord_id"]))
 
-    member_roles_payload = discord_service.get_guild_member(guild_id, str(user_record["discord_id"]))
+
+def _sync_user_roles(guild_id: str, guild_member: dict[str, Any], discord_user_id: str) -> None:
+    guild_roles = discord_service.list_guild_roles(guild_id)
+    role_rows = [
+        {
+            "discord_role_id": str(role.get("id") or ""),
+            "name": str(role.get("name") or "Role"),
+            "color": int(role.get("color", 0) or 0),
+            "position": int(role.get("position", 0) or 0),
+            "permissions": int(role.get("permissions", 0) or 0),
+        }
+        for role in guild_roles
+        if role.get("id")
+    ]
+    if role_rows:
+        database_service.upsert_roles(guild_id, role_rows)
+
+    member_roles_payload = discord_service.get_guild_member(guild_id, discord_user_id)
     member_role_ids = []
     for role_id in member_roles_payload.get("roles", []):
         role_row = database_service.get_role_by_discord_id(guild_id, str(role_id))
@@ -381,17 +385,12 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
             permissions = int(guild.get("permissions", 0) or 0)
             is_admin = is_owner or ((permissions & 0x8) == 0x8)
 
-            # FILTER: Only sync guilds where user is owner or admin
-            if not is_admin:
-                continue
-
             has_bot = False
             try:
                 has_bot = discord_service.is_bot_in_guild(guild_id)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Bot presence check failed guild_id=%s error=%s", guild_id, exc)
 
-            # Only the logged-in user's manageable guilds are written.
             db_guild = database_service.upsert_guild(
                 guild_id,
                 guild.get("name", ""),
@@ -404,6 +403,7 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
             )
             if has_bot:
                 try:
+                    _sync_user_roles(guild_id, database_service.get_guild_member_for_user(db_guild["id"], user_record["id"]), str(user_data["id"]))
                     channels = discord_service.list_guild_channels(guild_id)
                     database_service.upsert_channels(guild_id, [
                         {"discord_id": str(channel["id"]), "name": channel.get("name"), "channel_type": channel.get("type", 0), "position": channel.get("position", 0), "category_id": channel.get("parent_id"), "nsfw": channel.get("nsfw", False)}

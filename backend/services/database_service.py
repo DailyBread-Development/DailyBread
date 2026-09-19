@@ -127,6 +127,12 @@ def user_has_guild_access(user_uuid: str, guild_discord_id: str) -> bool:
     return bool(row and (row["is_owner"] or row["is_admin"]))
 
 
+def get_guild_membership(user_uuid: str, guild_discord_id: str) -> Optional[dict[str, Any]]:
+    return _fetch_one("""SELECT gm.*, g.discord_id AS guild_discord_id
+        FROM guild_members gm JOIN guilds g ON g.id = gm.guild_id
+        WHERE gm.user_id = %s AND g.discord_id = %s LIMIT 1""", (user_uuid, guild_discord_id))
+
+
 def get_user_guilds(user_uuid: str) -> list[dict[str, Any]]:
     rows = _fetch_all("""SELECT gm.is_owner, gm.is_admin, g.id, g.discord_id, g.name, g.icon, g.has_bot, g.owner_discord_id
         FROM guild_members gm JOIN guilds g ON g.id = gm.guild_id WHERE gm.user_id = %s""", (user_uuid,))
@@ -149,6 +155,28 @@ def get_member_role_mapping_for_user(user_uuid: str, guild_discord_id: str) -> l
         JOIN guilds g ON g.id = gm.guild_id
         JOIN roles r ON r.id = mr.role_id
         WHERE gm.user_id = %s AND g.discord_id = %s""", (user_uuid, guild_discord_id))
+
+
+def user_has_role_permission(user_uuid: str, guild_discord_id: str, permission: str) -> bool:
+    row = _fetch_one("""SELECT 1
+        FROM guild_members gm
+        JOIN guilds g ON g.id = gm.guild_id
+        JOIN member_roles mr ON mr.guild_member_id = gm.id
+        JOIN roles r ON r.id = mr.role_id AND r.guild_id = g.id
+        JOIN guild_role_permissions grp ON grp.role_id = r.id AND grp.guild_id = g.id
+        WHERE gm.user_id = %s AND g.discord_id = %s AND grp.permission = %s
+        LIMIT 1""", (user_uuid, guild_discord_id, permission))
+    return row is not None
+
+
+def channel_has_permission(channel_discord_id: str, guild_discord_id: str, permission: str) -> bool:
+    row = _fetch_one("""SELECT 1
+        FROM guild_permission_channels gpc
+        JOIN channels c ON c.id = gpc.channel_id AND c.discord_id = %s
+        JOIN guilds g ON g.id = c.guild_id AND g.discord_id = %s
+        WHERE gpc.guild_id = g.id AND gpc.permission = %s
+        LIMIT 1""", (channel_discord_id, guild_discord_id, permission))
+    return row is not None
 
 
 def upsert_channels(guild_discord_id: str, channels: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -3,6 +3,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from backend.services import database_service, bible_service
+from backend.services import authorization_service
 from backend.services.webhook_sender import build_payload_from_embed, send_webhook
 
 LOGGER = logging.getLogger(__name__)
@@ -111,23 +112,29 @@ async def send_embed(
     if not webhooks:
         return {"success": False, "error": "No webhook found for the selected gateway."}
 
-    # Ensure the user has valid ownership/admin access for the send target.
-    user_id = database_service.get_user_id_by_discord_id(user_discord_id)
-    if not user_id:
-        return {"success": False, "error": "Unable to validate user authorization."}
+    authorized_webhooks = []
+    for webhook in webhooks:
+        target_guild_id = str(webhook.get("guild_discord_id") or "")
+        target_channel_id = str(webhook.get("channel_discord_id") or "")
+        if not target_guild_id or not target_channel_id:
+            continue
+        if guild_id and target_guild_id != str(guild_id):
+            if webhook_id:
+                return {"success": False, "error": "Selected webhook does not belong to the requested guild."}
+            continue
+        if channel_id and target_channel_id != str(channel_id):
+            if webhook_id:
+                return {"success": False, "error": "Selected webhook does not belong to the requested channel."}
+            continue
 
-    target_guild_id = str(guild_id or webhooks[0].get("guild_discord_id") or "")
-    if not target_guild_id:
-        return {"success": False, "error": "Unable to determine target guild for webhook delivery."}
+        guild = database_service.get_guild_by_discord_id(target_guild_id)
+        channel = database_service.get_channel_for_guild(target_channel_id, target_guild_id)
+        if guild and channel and authorization_service.can_send_embed({"id": user_id}, guild, channel):
+            authorized_webhooks.append(webhook)
 
-    if not database_service.user_has_guild_access(user_id, target_guild_id):
-        return {"success": False, "error": "You do not have permission to send to this guild."}
-
-    if webhook_id and str(webhooks[0].get("guild_discord_id")) != target_guild_id:
-        return {"success": False, "error": "Selected webhook does not belong to the requested guild."}
-
-    if channel_id and any(str(webhook.get("channel_discord_id")) != str(channel_id) for webhook in webhooks):
-        return {"success": False, "error": "Selected webhook does not belong to the requested channel."}
+    if not authorized_webhooks:
+        return {"success": False, "error": "You do not have permission to send to this channel."}
+    webhooks = authorized_webhooks
 
     bible_data = None
     if embed.get("verse_reference"):
@@ -188,8 +195,6 @@ async def send_embed_to_destinations(
         try:
             if not guild_id or not channel_id:
                 outcome["error"] = "Destination is missing a guild or channel ID."
-            elif not database_service.user_has_guild_access(user_id, guild_id):
-                outcome["error"] = "You do not have permission to send to this guild."
             elif not (guild := database_service.get_guild_by_discord_id(guild_id)) or not guild.get("has_bot"):
                 outcome["error"] = "DailyBread is not installed in this server."
             else:
@@ -197,6 +202,8 @@ async def send_embed_to_destinations(
                 channel_type = channel.get("channel_type") if channel else None
                 if not channel or int(channel_type) != 0:
                     outcome["error"] = "Channel is not a valid text destination in this server."
+                elif not authorization_service.can_send_embed({"id": user_id}, guild, channel):
+                    outcome["error"] = "You do not have permission to send to this channel."
                 else:
                     webhooks = database_service.get_webhooks_for_channel(channel_id)
                     webhook = next((item for item in webhooks if str(item.get("guild_discord_id")) == guild_id), None)
