@@ -25,6 +25,7 @@ from backend.auth import (
     get_login_redirect_url,
     get_oauth_redirect_uri,
     get_session,
+    is_request_secure,
     exchange_code_for_token,
     fetch_discord_guilds,
     fetch_discord_user,
@@ -322,7 +323,7 @@ def login_discord(request: Request) -> RedirectResponse:
     state = secrets.token_urlsafe(16)
     redirect_url = get_login_redirect_url(state, request)
     response = RedirectResponse(url=redirect_url, status_code=307)
-    secure_cookie = request.url.scheme == "https"
+    secure_cookie = is_request_secure(request)
     response.set_cookie(
         STATE_COOKIE_NAME,
         state,
@@ -428,9 +429,10 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
         logger.error("OAuth callback failed: %s\n%s", exc, traceback.format_exc())
         raise
 
+    logger.info("OAuth session creation started user_id=%s", user.get("id"))
     session_value = create_session_cookie_value(user, synced_guilds)
     response = RedirectResponse(url="/dashboard")
-    secure_cookie = request.url.scheme == "https"
+    secure_cookie = is_request_secure(request)
     response.set_cookie(
         SESSION_COOKIE_NAME,
         session_value,
@@ -439,6 +441,8 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
         secure=secure_cookie,
         samesite="lax",
     )
+    logger.info("OAuth session cookie attached user_id=%s secure=%s", user.get("id"), secure_cookie)
+    logger.info("Redirecting authenticated user to /dashboard user_id=%s", user.get("id"))
     response.delete_cookie(STATE_COOKIE_NAME)
     return response
 
@@ -597,10 +601,17 @@ async def docs_privacy_page(request: Request) -> HTMLResponse:
 # Dashboard
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard_page(request: Request) -> HTMLResponse:
+    cookie_present = bool(request.cookies.get(SESSION_COOKIE_NAME))
+    logger.info("Dashboard session check cookie_present=%s", cookie_present)
     session = get_session(request)
     if not session:
+        if cookie_present:
+            logger.info("Dashboard session validation failed: malformed or invalid session")
+        else:
+            logger.info("Dashboard session validation failed: missing cookie")
         return RedirectResponse(url="/login")
 
+    logger.info("Dashboard session validation succeeded user_id=%s", session.get("user", {}).get("id"))
     guilds = _get_user_guilds_from_db(session)
     return templates.TemplateResponse(
         request,
@@ -631,6 +642,34 @@ async def guild_management_page(request: Request, guild_id: str) -> HTMLResponse
         "pages/guild.html",
         build_template_context(request, {
             "page_title": f"Manage {guild['name']} - DailyBread",
+            "active_page": "guild",
+            "user": session["user"],
+            "guild": guild,
+        }),
+    )
+
+
+@app.get("/dashboard/guild/{guild_id}/permissions", response_class=HTMLResponse)
+async def guild_permissions_page(request: Request, guild_id: str) -> HTMLResponse:
+    session = get_session(request)
+    if not session:
+        return RedirectResponse(url="/login")
+
+    guilds = _get_user_guilds_from_db(session)
+    guild = next((g for g in guilds if str(g.get("guild_id")) == str(guild_id)), None)
+    if not guild:
+        return RedirectResponse(url="/dashboard")
+
+    user_record = database_service.get_user_by_discord_id(str(session["user"]["id"]))
+    membership = database_service.get_guild_membership(user_record["id"], guild_id) if user_record else None
+    if not membership or not (membership.get("is_owner") or membership.get("is_admin")):
+        return RedirectResponse(url="/dashboard")
+
+    return templates.TemplateResponse(
+        request,
+        "pages/guild-permissions.html",
+        build_template_context(request, {
+            "page_title": f"Permissions - {guild['name']} - DailyBread",
             "active_page": "guild",
             "user": session["user"],
             "guild": guild,

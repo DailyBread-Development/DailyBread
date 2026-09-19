@@ -70,6 +70,29 @@ def build_guild_icon_url(guild: dict[str, str]) -> str | None:
     return None
 
 
+def is_request_secure(request: Request) -> bool:
+    """Honor proxy headers so Secure cookies work behind Cloudflare Tunnel/HTTPS frontends."""
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    if forwarded_proto:
+        proto = forwarded_proto.split(",", 1)[0].strip().lower()
+        if proto in {"http", "https"}:
+            return proto == "https"
+
+    forwarded_ssl = request.headers.get("x-forwarded-ssl")
+    if forwarded_ssl:
+        return forwarded_ssl.lower() == "on"
+
+    forwarded = request.headers.get("forwarded")
+    if forwarded:
+        for part in forwarded.split(";"):
+            if "proto=" in part:
+                proto = part.split("=", 1)[1].strip('"').lower()
+                if proto in {"http", "https"}:
+                    return proto == "https"
+
+    return request.url.scheme == "https"
+
+
 # A Session Cookie contains the Discord user info and their guilds, and is used to authenticate requests to the backend.
 def create_session_cookie_value(user: dict, guilds: list[dict]) -> str:
     payload = {

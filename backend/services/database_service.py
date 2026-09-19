@@ -169,6 +169,127 @@ def user_has_role_permission(user_uuid: str, guild_discord_id: str, permission: 
     return row is not None
 
 
+def get_permission_overview(guild_discord_id: str) -> dict[str, Any]:
+    guild = get_guild_by_discord_id(guild_discord_id)
+    if not guild:
+        raise DatabaseError("Guild not found.")
+
+    roles = _fetch_all(
+        """SELECT r.id AS role_id, r.discord_role_id, r.name, r.color, r.position,
+            EXISTS (
+                SELECT 1 FROM guild_role_permissions grp
+                WHERE grp.guild_id = %s AND grp.role_id = r.id AND grp.permission = %s
+            ) AS has_permission
+        FROM roles r
+        WHERE r.guild_id = %s
+        ORDER BY r.position DESC, r.name ASC""",
+        (guild["id"], "SEND_EMBEDS", guild["id"]),
+    )
+
+    channels = _fetch_all(
+        """SELECT c.id AS channel_id, c.discord_id AS channel_discord_id, c.name, c.channel_type, c.position,
+            EXISTS (
+                SELECT 1 FROM guild_permission_channels gpc
+                WHERE gpc.guild_id = %s AND gpc.channel_id = c.id AND gpc.permission = %s
+            ) AS has_permission,
+            EXISTS (
+                SELECT 1 FROM webhooks w
+                WHERE w.guild_id = %s AND w.channel_id = c.id AND w.enabled = TRUE
+            ) AS has_webhook
+        FROM channels c
+        WHERE c.guild_id = %s
+        ORDER BY c.position ASC, c.name ASC""",
+        (guild["id"], "SEND_EMBEDS", guild["id"], guild["id"]),
+    )
+
+    return {
+        "guild_id": guild["discord_id"],
+        "guild_uuid": guild["id"],
+        "permission_options": [{"key": "SEND_EMBEDS", "label": "Send Embeds"}],
+        "roles": [
+            {
+                "id": str(role["discord_role_id"]),
+                "role_id": str(role["discord_role_id"]),
+                "db_role_id": str(role["role_id"]),
+                "name": role["name"],
+                "color": int(role.get("color") or 0),
+                "position": int(role.get("position") or 0),
+                "has_send_embeds": bool(role.get("has_permission")),
+            }
+            for role in roles
+        ],
+        "channels": [
+            {
+                "id": str(channel["channel_discord_id"]),
+                "channel_id": str(channel["channel_discord_id"]),
+                "db_channel_id": str(channel["channel_id"]),
+                "name": channel["name"],
+                "type": str(channel.get("channel_type") or "0"),
+                "has_webhook": bool(channel.get("has_webhook")),
+                "has_send_embeds": bool(channel.get("has_permission")),
+            }
+            for channel in channels
+            if str(channel.get("channel_type") or "0") == "0"
+        ],
+    }
+
+
+def grant_role_permission(guild_discord_id: str, role_id: str, permission: str, actor_id: str) -> dict[str, Any]:
+    guild = get_guild_by_discord_id(guild_discord_id)
+    role = get_role_by_discord_id(guild_discord_id, role_id)
+    if not guild or not role:
+        raise DatabaseError("Selected role does not belong to this guild.")
+    row = _fetch_one(
+        """INSERT INTO guild_role_permissions (guild_id, role_id, permission, created_by)
+        VALUES (%s, %s, %s, %s) RETURNING *""",
+        (guild["id"], role["id"], permission, actor_id),
+    )
+    if row is None:
+        raise DatabaseError("Role permission could not be saved.")
+    return row
+
+
+def revoke_role_permission(guild_discord_id: str, role_id: str, permission: str) -> bool:
+    guild = get_guild_by_discord_id(guild_discord_id)
+    role = get_role_by_discord_id(guild_discord_id, role_id)
+    if not guild or not role:
+        return False
+    row = _fetch_one(
+        """DELETE FROM guild_role_permissions
+        WHERE guild_id = %s AND role_id = %s AND permission = %s RETURNING id""",
+        (guild["id"], role["id"], permission),
+    )
+    return row is not None
+
+
+def allow_channel_permission(guild_discord_id: str, channel_id: str, permission: str, actor_id: str) -> dict[str, Any]:
+    guild = get_guild_by_discord_id(guild_discord_id)
+    channel = get_channel_for_guild(channel_id, guild_discord_id)
+    if not guild or not channel:
+        raise DatabaseError("Selected channel does not belong to this guild.")
+    row = _fetch_one(
+        """INSERT INTO guild_permission_channels (guild_id, channel_id, permission, created_by)
+        VALUES (%s, %s, %s, %s) RETURNING *""",
+        (guild["id"], channel["id"], permission, actor_id),
+    )
+    if row is None:
+        raise DatabaseError("Channel permission could not be saved.")
+    return row
+
+
+def remove_channel_permission(guild_discord_id: str, channel_id: str, permission: str) -> bool:
+    guild = get_guild_by_discord_id(guild_discord_id)
+    channel = get_channel_for_guild(channel_id, guild_discord_id)
+    if not guild or not channel:
+        return False
+    row = _fetch_one(
+        """DELETE FROM guild_permission_channels
+        WHERE guild_id = %s AND channel_id = %s AND permission = %s RETURNING id""",
+        (guild["id"], channel["id"], permission),
+    )
+    return row is not None
+
+
 def channel_has_permission(channel_discord_id: str, guild_discord_id: str, permission: str) -> bool:
     row = _fetch_one("""SELECT 1
         FROM guild_permission_channels gpc
