@@ -264,7 +264,7 @@ async def landing_page(
     
     if code and state:
         logger.info("OAuth parameters arrived on landing page; forwarding to callback handler")
-        return oauth_callback(request, code, state)
+        return await oauth_callback(request, code, state)
 
     daily_verse = youversion_service.get_today()
 
