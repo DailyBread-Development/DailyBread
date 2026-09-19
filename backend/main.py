@@ -64,18 +64,26 @@ def _load_docs_file(filename: str) -> str:
     return file_path.read_text(encoding="utf-8")
 
 
-def _load_staff_document_asset(slug: str) -> str | None:
+def _load_staff_document_asset(slug: str, page_number: int = 1) -> str | None:
     document = next((doc for doc in STAFF_DOCUMENTS if doc["slug"] == slug), None)
     if document is None:
         return None
 
-    candidates = [
-        DOCS_DIR / "staff_guides" / document["asset_name"],
-        DOCS_DIR / "staff_guides" / slug,
-        DOCS_DIR / "staff_guides" / f"{slug}.svg",
-        DOCS_DIR / "staff_guides" / f"{document['title']}.svg",
+    if page_number < 1:
+        page_number = 1
+    asset_base = str(document.get("asset_base") or document.get("title") or slug)
+    page_filename = f"{asset_base}.svg" if page_number == 1 else f"{asset_base} ({page_number}).svg"
+    asset_path = DOCS_DIR / str(document.get("directory") or "staff_guides") / page_filename
+    if asset_path.exists():
+        return str(asset_path)
+
+    legacy_candidates = [
+        DOCS_DIR / "staff_guides" / document.get("asset_name", ""),
+        DOCS_DIR / str(document.get("directory") or "staff_guides") / slug,
+        DOCS_DIR / str(document.get("directory") or "staff_guides") / f"{slug}.svg",
+        DOCS_DIR / str(document.get("directory") or "staff_guides") / f"{document['title']}.svg",
     ]
-    for candidate in candidates:
+    for candidate in legacy_candidates:
         if candidate.exists():
             return str(candidate)
     return None
@@ -277,6 +285,33 @@ async def login_page(request: Request) -> HTMLResponse:
     )
 
 
+@app.get("/staff/verify")
+async def verify_staff_access(request: Request) -> RedirectResponse:
+    session = get_session(request)
+    if not session:
+        return RedirectResponse(url="/login")
+
+    user = session.get("user")
+    if not user:
+        return RedirectResponse(url="/login")
+
+    user_record = database_service.get_user_by_discord_id(str(user["id"]))
+    if not user_record:
+        return RedirectResponse(url="/login")
+
+    oauth_session = database_service.get_latest_oauth_session(user_record["id"])
+    if not oauth_session or not oauth_session.get("access_token"):
+        return RedirectResponse(url="/login/discord")
+
+    try:
+        _ensure_development_guild_sync_for_user(user_record, oauth_session["access_token"])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Staff access verification failed for user_id=%s error=%s", user_record["id"], exc)
+        return RedirectResponse(url="/login/discord")
+
+    return RedirectResponse(url="/docs")
+
+
 # pylint: disable=invalid-name
 @app.get("/login/discord")
 def login_discord(request: Request) -> RedirectResponse:
@@ -441,13 +476,23 @@ async def docs_staff_guide_page(request: Request, slug: str) -> HTMLResponse:
     if not is_user_authorized_for_staff_guide(session, slug):
         raise HTTPException(status_code=403, detail="You are not authorized to view this staff guide.")
 
-    asset_path = _load_staff_document_asset(slug)
+    try:
+        page_number = int(request.query_params.get("page", "1") or "1")
+    except ValueError:
+        page_number = 1
+    if page_number < 1:
+        page_number = 1
+    max_pages = int(document.get("page_count") or 3)
+    if page_number > max_pages:
+        page_number = max_pages
+
+    asset_path = _load_staff_document_asset(slug, page_number)
     if asset_path is None:
         document_body = "<p class=\"docs-placeholder\">This staff guide has not been added yet.</p>"
         asset_url = None
     else:
-        asset_url = f"/docs/staff-assets/{Path(asset_path).name}"
-        document_body = f'<img src="{asset_url}" alt="{document["title"]}" class="docs-svg-document" draggable="false" />'
+        asset_url = f"/docs/staff-assets/{slug}/{page_number}"
+        document_body = f'<img src="{asset_url}" alt="{document["title"]} page {page_number}" class="docs-svg-document" draggable="false" />'
 
     return templates.TemplateResponse(
         request,
@@ -459,21 +504,30 @@ async def docs_staff_guide_page(request: Request, slug: str) -> HTMLResponse:
             "document_title": document["title"],
             "last_updated": None,
             "document_body": document_body,
+            "guide_pages": list(range(1, max_pages + 1)),
+            "current_page": page_number,
+            "active_slug": slug,
         }),
     )
 
 
-@app.get("/docs/staff-assets/{filename}")
-async def docs_staff_asset(request: Request, filename: str) -> Any:
+@app.get("/docs/staff-assets/{slug}/{page}")
+async def docs_staff_asset(request: Request, slug: str, page: str) -> Any:
     session = get_session(request)
     if not session:
         return RedirectResponse(url="/login")
 
-    slug = filename.rsplit(".", 1)[0]
     if not is_user_authorized_for_staff_guide(session, slug):
         raise HTTPException(status_code=403, detail="You are not authorized to access this staff guide asset.")
 
-    asset_path = _load_staff_document_asset(slug)
+    try:
+        page_number = int(page)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Staff guide page not found.") from None
+    if page_number < 1:
+        raise HTTPException(status_code=404, detail="Staff guide page not found.")
+
+    asset_path = _load_staff_document_asset(slug, page_number)
     if asset_path is None:
         raise HTTPException(status_code=404, detail="Staff guide asset not found.")
 

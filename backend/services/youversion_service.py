@@ -270,7 +270,7 @@ def get_today() -> dict[str, Any] | None:
 
     cached = get_bible_cache(cache_key)
     if cached and cached.get("text"):
-        image_url = _resolve_daily_verse_image()
+        image_url = cached.get("image_url") or _resolve_daily_verse_image()
         passage_id, display_reference = _decompose_reference_value(cached.get("reference"))
         result = {
             "reference": display_reference or cached.get("reference") or "Daily verse",
@@ -296,6 +296,7 @@ def get_today() -> dict[str, Any] | None:
                 result.get("stored_reference") or result["reference"],
                 result["text"],
                 result["translation"],
+                result.get("image_url"),
             )
             _DAILY_CONTENT_CACHE[cache_key] = result
             logger.info(
@@ -315,7 +316,7 @@ def get_today() -> dict[str, Any] | None:
 
     recent = get_latest_daily_verse_cache()
     if recent and recent.get('text'):
-        image_url = _resolve_daily_verse_image()
+        image_url = recent.get("image_url") or _resolve_daily_verse_image()
         passage_id, display_reference = _decompose_reference_value(recent.get("reference"))
         cached_date = recent.get("cache_key", "").split(":", 2)[1] if ":" in recent.get("cache_key", "") else date_text
         result = {

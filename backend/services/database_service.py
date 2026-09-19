@@ -327,8 +327,8 @@ def get_latest_daily_verse_cache() -> Optional[dict[str, Any]]:
     return _fetch_one("SELECT * FROM bible_cache WHERE cache_key LIKE 'daily_verse:%' ORDER BY cache_key DESC LIMIT 1", ())
 
 
-def store_bible_cache(cache_key: str, reference: str, text: str, translation: str | None = None) -> dict[str, Any]:
-    row = _fetch_one("""INSERT INTO bible_cache (cache_key, reference, text, translation) VALUES (%s, %s, %s, %s)
-        ON CONFLICT (cache_key) DO UPDATE SET reference = EXCLUDED.reference, text = EXCLUDED.text, translation = EXCLUDED.translation RETURNING *""", (cache_key, reference, text, translation))
+def store_bible_cache(cache_key: str, reference: str, text: str, translation: str | None = None, image_url: str | None = None) -> dict[str, Any]:
+    row = _fetch_one("""INSERT INTO bible_cache (cache_key, reference, text, translation, image_url) VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT (cache_key) DO UPDATE SET reference = EXCLUDED.reference, text = EXCLUDED.text, translation = EXCLUDED.translation, image_url = EXCLUDED.image_url RETURNING *""", (cache_key, reference, text, translation, image_url))
     assert row is not None
     return row

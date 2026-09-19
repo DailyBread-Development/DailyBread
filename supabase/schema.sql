@@ -157,7 +157,7 @@ CREATE TABLE IF NOT EXISTS public.member_roles (
 ) TABLESPACE pg_default;
 
 
-– 5. Other
+-- 5. Other
 CREATE TABLE IF NOT EXISTS public.bible_cache ( id uuid NOT NULL DEFAULT gen_random_uuid(), reference text NOT NULL, language text NULL DEFAULT 'en'::text, text text NOT NULL, translation text NULL, updated_at timestamp without time zone NULL DEFAULT now(), cache_key text NOT NULL, CONSTRAINT bible_cache_pkey PRIMARY KEY (id), CONSTRAINT bible_cache_cache_key_unique UNIQUE (cache_key) ) TABLESPACE pg_default; 
 
 CREATE TABLE IF NOT EXISTS public.webhooks (
@@ -181,3 +181,61 @@ CREATE TABLE IF NOT EXISTS public.webhooks (
         REFERENCES public.guilds (id)
         ON DELETE CASCADE
 ) TABLESPACE pg_default;
+
+-- 6. Role Management
+CREATE TABLE IF NOT EXISTS public.guild_role_permissions (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    guild_id uuid NOT NULL,
+    role_id uuid NOT NULL,
+    permission text NOT NULL,
+    created_by uuid NULL,
+    created_at timestamp without time zone DEFAULT now(),
+
+    CONSTRAINT guild_role_permissions_pkey PRIMARY KEY (id),
+
+    CONSTRAINT guild_role_permissions_unique
+        UNIQUE (guild_id, role_id, permission),
+
+    CONSTRAINT guild_role_permissions_guild_id_fkey
+        FOREIGN KEY (guild_id)
+        REFERENCES public.guilds (id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT guild_role_permissions_role_id_fkey
+        FOREIGN KEY (role_id)
+        REFERENCES public.roles (id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT guild_role_permissions_created_by_fkey
+        FOREIGN KEY (created_by)
+        REFERENCES public.users (id)
+        ON DELETE SET NULL
+);
+CREATE TABLE IF NOT EXISTS public.guild_permission_channels (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    guild_id uuid NOT NULL,
+    channel_id uuid NOT NULL,
+    permission text NOT NULL,
+    created_by uuid NULL,
+    created_at timestamp without time zone DEFAULT now(),
+
+    CONSTRAINT guild_permission_channels_pkey PRIMARY KEY (id),
+
+    CONSTRAINT guild_permission_channels_unique
+        UNIQUE (guild_id, channel_id, permission),
+
+    CONSTRAINT guild_permission_channels_guild_id_fkey
+        FOREIGN KEY (guild_id)
+        REFERENCES public.guilds (id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT guild_permission_channels_channel_id_fkey
+        FOREIGN KEY (channel_id)
+        REFERENCES public.channels (id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT guild_permission_channels_created_by_fkey
+        FOREIGN KEY (created_by)
+        REFERENCES public.users (id)
+        ON DELETE SET NULL
+);

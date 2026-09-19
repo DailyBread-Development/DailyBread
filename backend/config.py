@@ -11,8 +11,8 @@ DEVELOPMENT_GUILD_ID = "1512990445989396480"
 
 STAFF_DOCUMENT_ROLES = {
     "1512991825764286544": "Staff Guide",
-    "1512992978212356299": "Community Management & Safety Staff Guide",
-    "1512991672580182169": "developer staff guide",
+    "1512992978212356299": "Community Administration & Safety Staff Guide",
+    "1512991672580182169": "Developer Staff Guide",
 }
 
 STAFF_DOCUMENTS = [
@@ -20,18 +20,24 @@ STAFF_DOCUMENTS = [
         "slug": "staff-guide",
         "title": "Staff Guide",
         "role_id": "1512991825764286544",
-        "asset_name": "staff-guide.svg",
+        "directory": "staff_guides",
+        "asset_base": "Staff Guide",
+        "page_count": 3,
     },
     {
-        "slug": "community-management-safety-staff-guide",
-        "title": "Community Management & Safety Staff Guide",
+        "slug": "community-administration-safety-staff-guide",
+        "title": "Community Administration & Safety Staff Guide",
         "role_id": "1512992978212356299",
-        "asset_name": "community-management-safety-staff-guide.svg",
+        "directory": "mtm_guides",
+        "asset_base": "MTM Guide",
+        "page_count": 3,
     },
     {
         "slug": "developer-staff-guide",
-        "title": "developer staff guide",
+        "title": "Developer Staff Guide",
         "role_id": "1512991672580182169",
-        "asset_name": "developer-staff-guide.svg",
+        "directory": "dev_guides",
+        "asset_base": "DEV Guide",
+        "page_count": 3,
     },
 ]
