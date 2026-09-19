@@ -1,3 +1,4 @@
+import asyncio
 import logging  # noqa: I001
 import os
 import secrets
@@ -331,18 +332,28 @@ def login_discord(request: Request) -> RedirectResponse:
         httponly=True,
         secure=secure_cookie,
         samesite="lax",
+        path="/",
+    )
+    logger.info(
+        "OAuth state cookie attached path=/ secure=%s httponly=true samesite=lax host=%s",
+        secure_cookie,
+        request.headers.get("host"),
     )
     return response
 
 
 # pylint: disable=invalid-name
 @app.get("/callback/")
-def oauth_callback_no_slash(request: Request, code: str | None = None, state: str | None = None) -> RedirectResponse:
-    return oauth_callback(request, code, state)
+async def oauth_callback_no_slash(request: Request, code: str | None = None, state: str | None = None) -> RedirectResponse:
+    return await oauth_callback(request, code, state)
+
+
 @app.get("/callback")
-def oauth_callback_with_slash(request: Request, code: str | None = None, state: str | None = None) -> RedirectResponse:
-    return oauth_callback(request, code, state)
-def oauth_callback(request: Request, code: str | None = None, state: str | None = None) -> RedirectResponse:
+async def oauth_callback_with_slash(request: Request, code: str | None = None, state: str | None = None) -> RedirectResponse:
+    return await oauth_callback(request, code, state)
+
+
+async def oauth_callback(request: Request, code: str | None = None, state: str | None = None) -> RedirectResponse:
     if not code or not state:
         raise HTTPException(status_code=400, detail="Missing OAuth callback parameters.")
 
@@ -352,14 +363,14 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
 
     logger.info("OAuth callback entered")
     try:
-        token_data = exchange_code_for_token(code, get_oauth_redirect_uri(request))
+        token_data = await asyncio.to_thread(exchange_code_for_token, code, get_oauth_redirect_uri(request))
         logger.info("Discord token exchange succeeded")
         access_token = token_data["access_token"]
 
-        user_data = fetch_discord_user(access_token)
+        user_data = await asyncio.to_thread(fetch_discord_user, access_token)
         logger.info("Discord user fetched id=%s username=%s", user_data.get("id"), user_data.get("username"))
 
-        guilds_data = fetch_discord_guilds(access_token)
+        guilds_data = await asyncio.to_thread(fetch_discord_guilds, access_token)
         logger.info("Discord guilds fetched count=%s", len(guilds_data))
 
         logger.info("PostgreSQL OAuth sync started")
@@ -370,7 +381,8 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
             "avatar_url": build_avatar_url(user_data),
         }
 
-        user_record = database_service.upsert_user_by_discord_id(
+        user_record = await asyncio.to_thread(
+            database_service.upsert_user_by_discord_id,
             discord_id=str(user_data["id"]),
             username=user_data.get("username", ""),
             avatar=user.get("avatar"),
@@ -378,7 +390,7 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
         )
         # A website login is the only event that updates PostgreSQL. The bot
         # never performs background database synchronization.
-        database_service.store_oauth_session(user_record["id"], token_data)
+        await asyncio.to_thread(database_service.store_oauth_session, user_record["id"], token_data)
         synced_guilds = []
         for guild in guilds_data:
             guild_id = str(guild.get("id", ""))
@@ -388,28 +400,42 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
 
             has_bot = False
             try:
-                has_bot = discord_service.is_bot_in_guild(guild_id)
+                has_bot = await asyncio.to_thread(discord_service.is_bot_in_guild, guild_id)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Bot presence check failed guild_id=%s error=%s", guild_id, exc)
 
-            db_guild = database_service.upsert_guild(
+            db_guild = await asyncio.to_thread(
+                database_service.upsert_guild,
                 guild_id,
                 guild.get("name", ""),
                 guild.get("icon"),
                 str(user_data["id"]) if is_owner else None,
                 has_bot,
             )
-            database_service.upsert_guild_member(
-                db_guild["id"], user_record["id"], is_owner, is_admin
+            await asyncio.to_thread(
+                database_service.upsert_guild_member,
+                db_guild["id"],
+                user_record["id"],
+                is_owner,
+                is_admin,
             )
             if has_bot:
                 try:
-                    _sync_user_roles(guild_id, database_service.get_guild_member_for_user(db_guild["id"], user_record["id"]), str(user_data["id"]))
-                    channels = discord_service.list_guild_channels(guild_id)
-                    database_service.upsert_channels(guild_id, [
-                        {"discord_id": str(channel["id"]), "name": channel.get("name"), "channel_type": channel.get("type", 0), "position": channel.get("position", 0), "category_id": channel.get("parent_id"), "nsfw": channel.get("nsfw", False)}
-                        for channel in channels
-                    ])
+                    member_record = await asyncio.to_thread(
+                        database_service.get_guild_member_for_user,
+                        db_guild["id"],
+                        user_record["id"],
+                    )
+                    await asyncio.to_thread(_sync_user_roles, guild_id, member_record, str(user_data["id"]))
+                    channels = await asyncio.to_thread(discord_service.list_guild_channels, guild_id)
+                    await asyncio.to_thread(
+                        database_service.upsert_channels,
+                        guild_id,
+                        [
+                            {"discord_id": str(channel["id"]), "name": channel.get("name"), "channel_type": channel.get("type", 0), "position": channel.get("position", 0), "category_id": channel.get("parent_id"), "nsfw": channel.get("nsfw", False)}
+                            for channel in channels
+                        ],
+                    )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Guild channel sync failed guild_id=%s error=%s", guild_id, exc)
             synced_guilds.append(
@@ -429,21 +455,30 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
         logger.error("OAuth callback failed: %s\n%s", exc, traceback.format_exc())
         raise
 
+    secure_cookie = is_request_secure(request)
+    cookie_domain = None
+    logger.info(
+        "OAuth session cookie attached path=/ secure=%s httponly=true samesite=lax domain=%s host=%s",
+        secure_cookie,
+        cookie_domain,
+        request.headers.get("host"),
+    )
     logger.info("OAuth session creation started user_id=%s", user.get("id"))
     session_value = create_session_cookie_value(user, synced_guilds)
     response = RedirectResponse(url="/dashboard")
-    secure_cookie = is_request_secure(request)
     response.set_cookie(
         SESSION_COOKIE_NAME,
         session_value,
         max_age=SESSION_MAX_AGE,
+        path="/",
+        domain=cookie_domain,
         httponly=True,
         secure=secure_cookie,
         samesite="lax",
     )
-    logger.info("OAuth session cookie attached user_id=%s secure=%s", user.get("id"), secure_cookie)
+    logger.info("OAuth session cookie attached user_id=%s secure=%s path=/", user.get("id"), secure_cookie)
     logger.info("Redirecting authenticated user to /dashboard user_id=%s", user.get("id"))
-    response.delete_cookie(STATE_COOKIE_NAME)
+    response.delete_cookie(STATE_COOKIE_NAME, path="/")
     return response
 
 
@@ -749,8 +784,8 @@ async def advanced_builder_page(request: Request) -> RedirectResponse:
 @app.get("/logout")
 def logout(request: Request) -> RedirectResponse:
     response = RedirectResponse(url="/")
-    response.delete_cookie(SESSION_COOKIE_NAME)
-    response.delete_cookie(STATE_COOKIE_NAME)
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    response.delete_cookie(STATE_COOKIE_NAME, path="/")
     return response
 
 
