@@ -1,4 +1,5 @@
 import asyncio
+from http.cookies import SimpleCookie
 import logging  # noqa: I001
 import os
 import secrets
@@ -475,6 +476,24 @@ async def oauth_callback(request: Request, code: str | None = None, state: str |
         httponly=True,
         secure=secure_cookie,
         samesite="lax",
+    )
+    session_cookie = SimpleCookie()
+    for header_name, header_value in response.raw_headers:
+        if header_name.lower() == b"set-cookie" and header_value.startswith(f"{SESSION_COOKIE_NAME}=".encode()):
+            session_cookie.load(header_value.decode("latin-1"))
+            break
+    session_morsel = session_cookie.get(SESSION_COOKIE_NAME)
+    logger.info(
+        "OAuth response headers: location=%s session_cookie_present=%s session_cookie_path=%s "
+        "session_cookie_secure=%s session_cookie_httponly=%s session_cookie_samesite=%s "
+        "session_cookie_domain=%s",
+        response.headers.get("location"),
+        session_morsel is not None,
+        session_morsel["path"] if session_morsel else None,
+        bool(session_morsel["secure"]) if session_morsel else False,
+        bool(session_morsel["httponly"]) if session_morsel else False,
+        session_morsel["samesite"] if session_morsel else None,
+        session_morsel["domain"] or "<host-only>" if session_morsel else None,
     )
     logger.info("OAuth session cookie attached user_id=%s secure=%s path=/", user.get("id"), secure_cookie)
     logger.info("Redirecting authenticated user to /dashboard user_id=%s", user.get("id"))
