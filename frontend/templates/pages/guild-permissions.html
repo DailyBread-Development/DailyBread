@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="min-h-[calc(100vh-6rem)] bg-gradient-to-b from-bread-cream/50 to-bread-cream/30 py-8">
+  <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+    <div class="mb-8 flex flex-col gap-4">
+      <a href="/dashboard/guild/{{ guild.guild_id }}" class="w-fit text-sm font-semibold text-bread-gold transition hover:text-bread-ink">Back to Server</a>
+
+      <section class="rounded-[2rem] border border-black/8 bg-white/95 p-6 backdrop-blur-sm sm:p-8">
+        <div class="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p class="text-xs font-extrabold uppercase tracking-[0.2em] text-bread-sage">DailyBread Access</p>
+            <h1 class="mt-3 font-serif text-3xl font-bold text-bread-ink">Permissions for {{ guild.name }}</h1>
+            <p class="mt-3 max-w-2xl text-sm leading-6 text-black/65">Manage which roles and channels are allowed to send DailyBread embeds.</p>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="grid gap-6 lg:grid-cols-2">
+      <section class="rounded-[2rem] border border-black/8 bg-white/95 p-6 backdrop-blur-sm sm:p-8">
+        <div class="mb-6">
+          <h2 class="font-serif text-2xl font-bold text-bread-ink">Role Permissions</h2>
+          <p class="mt-2 text-sm text-black/65">Allow Discord roles to use the Send Embeds permission.</p>
+        </div>
+        <div id="role-permissions" class="space-y-3">
+          <p class="text-sm text-black/60">Loading access roles...</p>
+        </div>
+      </section>
+
+      <section class="rounded-[2rem] border border-black/8 bg-white/95 p-6 backdrop-blur-sm sm:p-8">
+        <div class="mb-6">
+          <h2 class="font-serif text-2xl font-bold text-bread-ink">Channel Permissions</h2>
+          <p class="mt-2 text-sm text-black/65">Allow text channels that already have a DailyBread webhook to send embeds.</p>
+        </div>
+        <div id="channel-permissions" class="space-y-3">
+          <p class="text-sm text-black/60">Loading permitted channels...</p>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+const guildId = '{{ guild.guild_id }}';
+const rolePermissionsEl = document.getElementById('role-permissions');
+const channelPermissionsEl = document.getElementById('channel-permissions');
+
+async function fetchPermissions() {
+  const response = await fetch(`/api/guilds/${guildId}/permissions`);
+  const data = await response.json();
+
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || 'Unable to load permissions');
+  }
+
+  const overview = data.overview || {};
+  const roles = overview.roles || [];
+  const channels = overview.channels || [];
+
+  rolePermissionsEl.innerHTML = roles.length
+    ? roles.map(role => `
+        <div class="flex items-center justify-between gap-4 rounded-2xl border border-black/10 bg-bread-cream/70 p-4">
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="inline-block h-4 w-4 rounded-full" style="background:#${roles.length ? (role.color || 'D6B36A').toString(16).padStart(6,'0') : 'D6B36A'}"></span>
+              <span class="font-semibold text-bread-ink">${role.name}</span>
+            </div>
+            <p class="mt-1 text-xs text-black/55">Send Embeds</p>
+          </div>
+          <button type="button" class="rounded-2xl ${role.has_send_embeds ? 'bg-emerald-600 text-white' : 'bg-bread-background text-bread-ink'} px-4 py-2 text-sm font-semibold" data-role-id="${role.id}" data-enabled="${role.has_send_embeds}">
+            ${role.has_send_embeds ? 'Enabled' : 'Enable'}
+          </button>
+        </div>
+      `).join('')
+    : '<p class="text-sm text-black/60">No roles are synced for this server yet.</p>';
+
+  channelPermissionsEl.innerHTML = channels.length
+    ? channels.map(channel => `
+        <div class="flex items-center justify-between gap-4 rounded-2xl border border-black/10 bg-bread-cream/70 p-4">
+          <div>
+            <span class="font-semibold text-bread-ink">#${channel.name}</span>
+            <p class="mt-1 text-xs text-black/55">${channel.has_webhook ? 'Webhook available' : 'Webhook missing'}</p>
+          </div>
+          <button type="button" class="rounded-2xl ${channel.has_send_embeds ? 'bg-emerald-600 text-white' : 'bg-bread-background text-bread-ink'} px-4 py-2 text-sm font-semibold" data-channel-id="${channel.id}" data-enabled="${channel.has_send_embeds}">
+            ${channel.has_send_embeds ? 'Allowed' : 'Allow'}
+          </button>
+        </div>
+      `).join('')
+    : '<p class="text-sm text-black/60">No text channels are available yet.</p>';
+
+  document.querySelectorAll('[data-role-id]').forEach(button => {
+    button.addEventListener('click', async () => {
+      const roleId = button.dataset.roleId;
+      const enabled = button.dataset.enabled === 'true';
+      const method = enabled ? 'DELETE' : 'POST';
+      const url = `/api/guilds/${guildId}/permissions/roles/${roleId}`;
+      const response = await fetch(url, { method, headers: { 'Content-Type': 'application/json' } });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        alert(data.error || 'Unable to update role permission');
+        return;
+      }
+      fetchPermissions();
+    });
+  });
+
+  document.querySelectorAll('[data-channel-id]').forEach(button => {
+    button.addEventListener('click', async () => {
+      const channelId = button.dataset.channelId;
+      const enabled = button.dataset.enabled === 'true';
+      const method = enabled ? 'DELETE' : 'POST';
+      const url = `/api/guilds/${guildId}/permissions/channels/${channelId}`;
+      const response = await fetch(url, { method, headers: { 'Content-Type': 'application/json' } });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        alert(data.error || 'Unable to update channel permission');
+        return;
+      }
+      fetchPermissions();
+    });
+  });
+}
+
+fetchPermissions().catch(error => {
+  rolePermissionsEl.innerHTML = `<p class="text-sm text-rose-600">${error.message}</p>`;
+  channelPermissionsEl.innerHTML = `<p class="text-sm text-rose-600">${error.message}</p>`;
+});
+</script>
+{% endblock %}

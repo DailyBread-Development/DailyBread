@@ -1,9 +1,15 @@
 import base64
 import os
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
+
+try:
+    from cairosvg import svg2png
+except Exception:  # pragma: no cover - native Cairo dependency may be absent in some environments
+    svg2png = None
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
 BOT_TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("discord_token") or os.getenv("DISCORD_BOT_TOKEN")
@@ -18,8 +24,14 @@ _GUILD_CACHE_TTL = 60
 
 
 def _dailybread_avatar_data_uri() -> str:
-    svg = """<svg xmlns='http://www.w3.org/2000/svg' width='256' height='256' viewBox='0 0 256 256'><rect width='256' height='256' rx='64' fill='#f2e3b3'/><circle cx='128' cy='128' r='92' fill='#2b2b2b'/><path d='M88 92h80v24H112v18h48v22H112v18h56v24H88z' fill='#f2c96b'/></svg>"""
-    return f"data:image/svg+xml;base64,{base64.b64encode(svg.encode('utf-8')).decode('ascii')}"
+    logo_path = Path(__file__).resolve().parents[2] / "frontend" / "static" / "images" / "DailyBread.svg"
+    if svg2png is None:
+        with logo_path.open("rb") as image_file:
+            svg_bytes = image_file.read()
+        encoded = base64.b64encode(svg_bytes).decode("ascii")
+        return f"data:image/svg+xml;base64,{encoded}"
+    png_logo = svg2png(bytestring=logo_path.read_bytes(), output_width=256, output_height=256)
+    return f"data:image/png;base64,{base64.b64encode(png_logo).decode('ascii')}"
 
 
 # Internal helper to require a valid session for routes that need authentication. Raises ValueError if not authenticated.
@@ -80,6 +92,10 @@ def list_guild_roles(guild_id: str) -> List[Dict[str, Any]]:
     return roles
 
 
+def get_guild_member(guild_id: str, user_id: str) -> Dict[str, Any]:
+    return _request("GET", f"/guilds/{guild_id}/members/{user_id}")
+
+
 def list_guild_members(guild_id: str) -> List[Dict[str, Any]]:
     """Load a bounded member snapshot once per minute for mention search."""
     cache_key = str(guild_id)
@@ -111,9 +127,9 @@ def search_guild_roles(guild_id: str, query: str, limit: int = 8) -> List[Dict[s
 
 
 # Creates a webhook in the specified channel with the given name, and returns the webhook information including the ID and token needed to send messages through it.
-def create_webhook(channel_id: str, name: str = "DailyBread") -> Dict[str, Any]:
+def create_webhook(channel_id: str) -> Dict[str, Any]:
     payload = {
-        "name": name,
+        "name": "DailyBread",
         "avatar": _dailybread_avatar_data_uri(),
     }
     return _request("POST", f"/channels/{channel_id}/webhooks", json=payload)

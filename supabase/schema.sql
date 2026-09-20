@@ -1,85 +1,241 @@
--- DailyBread v2: existing PostgreSQL schema. This file is not applied by the application.
--- This deliberately does not migrate or retain the legacy DailyBread tables.
-create extension if not exists pgcrypto;
+-- ~/app_stack/db_init/init.sql
 
-create or replace function public.set_updated_at() returns trigger language plpgsql as $$
-begin new.updated_at = timezone('utc', now()); return new; end $$;
+-- 1. Initialize Extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
-create table public.users (
-  id uuid primary key default gen_random_uuid(),
-  discord_id bigint not null unique,
-  username text not null,
-  global_name text,
-  avatar text,
-  created_at timestamptz not null default timezone('utc', now()),
-  updated_at timestamptz not null default timezone('utc', now())
-);
-create table public.oauth_sessions (
-  id uuid primary key default gen_random_uuid(), user_id uuid not null references public.users(id) on delete cascade,
-  access_token text not null, refresh_token text, expires_at timestamptz not null,
-  created_at timestamptz not null default timezone('utc', now()), updated_at timestamptz not null default timezone('utc', now())
-);
-create table public.guilds (
-  id uuid primary key default gen_random_uuid(), discord_id bigint not null unique, name text not null, icon text,
-  owner_discord_id bigint, has_bot boolean not null default true,
-  created_at timestamptz not null default timezone('utc', now()), updated_at timestamptz not null default timezone('utc', now())
-);
-create table public.guild_members (
-  id uuid primary key default gen_random_uuid(), guild_id uuid not null references public.guilds(id) on delete cascade,
-  user_id uuid not null references public.users(id) on delete cascade, is_owner boolean not null default false,
-  is_admin boolean not null default false, joined_at timestamptz not null default timezone('utc', now()), unique (guild_id, user_id)
-);
-create table public.roles (
-  id uuid primary key default gen_random_uuid(), guild_id uuid not null references public.guilds(id) on delete cascade,
-  discord_role_id bigint not null, name text not null, color integer not null default 0, position integer not null default 0,
-  permissions bigint not null default 0, created_at timestamptz not null default timezone('utc', now()), updated_at timestamptz not null default timezone('utc', now()),
-  unique (guild_id, discord_role_id)
-);
-create table public.member_roles (
-  guild_member_id uuid not null references public.guild_members(id) on delete cascade,
-  role_id uuid not null references public.roles(id) on delete cascade, primary key (guild_member_id, role_id)
-);
-create table public.channels (
-  id uuid primary key default gen_random_uuid(), guild_id uuid not null references public.guilds(id) on delete cascade,
-  discord_id bigint not null unique, name text not null, channel_type integer not null, position integer not null default 0,
-  category_id bigint, nsfw boolean not null default false, created_at timestamptz not null default timezone('utc', now()), updated_at timestamptz not null default timezone('utc', now())
-);
-create table public.webhooks (
-  id uuid primary key default gen_random_uuid(), guild_id uuid not null references public.guilds(id) on delete cascade,
-  channel_id uuid not null references public.channels(id) on delete cascade, discord_webhook_id bigint not null unique,
-  token text not null, name text not null, enabled boolean not null default true,
-  created_at timestamptz not null default timezone('utc', now()), updated_at timestamptz not null default timezone('utc', now())
-);
-create table public.embeds (
-  id uuid primary key default gen_random_uuid(), creator_id uuid not null references public.users(id) on delete cascade,
-  title text, description text, color integer, footer text, image_url text, thumbnail_url text, author text, timestamp timestamptz,
-  message_content text, verse_reference text,
-  created_at timestamptz not null default timezone('utc', now()), updated_at timestamptz not null default timezone('utc', now())
-);
-create table public.guild_embeds (guild_id uuid not null references public.guilds(id) on delete cascade, embed_id uuid not null references public.embeds(id) on delete cascade, primary key (guild_id, embed_id));
-create table public.containers (id uuid primary key default gen_random_uuid(), creator_id uuid not null references public.users(id) on delete cascade, name text not null, data jsonb not null, created_at timestamptz not null default timezone('utc', now()), updated_at timestamptz not null default timezone('utc', now()));
-create table public.guild_containers (guild_id uuid not null references public.guilds(id) on delete cascade, container_id uuid not null references public.containers(id) on delete cascade, primary key (guild_id, container_id));
-create table public.guild_settings (guild_id uuid primary key references public.guilds(id) on delete cascade, timezone text not null default 'UTC', default_translation text, language text not null default 'en', created_at timestamptz not null default timezone('utc', now()), updated_at timestamptz not null default timezone('utc', now()));
-create table public.audit_logs (id uuid primary key default gen_random_uuid(), guild_id uuid references public.guilds(id) on delete set null, user_id uuid references public.users(id) on delete set null, action text not null, metadata jsonb not null default '{}'::jsonb, created_at timestamptz not null default timezone('utc', now()));
-create table public.notifications (id uuid primary key default gen_random_uuid(), user_id uuid not null references public.users(id) on delete cascade, title text not null, message text not null, read boolean not null default false, created_at timestamptz not null default timezone('utc', now()));
+-- 2. Base Independent Tables (No Foreign Keys)
+CREATE TABLE IF NOT EXISTS public.users (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    discord_id bigint NOT NULL,
+    username text NOT NULL,
+    global_name text NULL,
+    avatar text NULL,
+    created_at timestamp without time zone NULL DEFAULT now(),
+    updated_at timestamp without time zone NULL DEFAULT now(),
+    CONSTRAINT users_pkey PRIMARY KEY (id),
+    CONSTRAINT users_discord_id_key UNIQUE (discord_id)
+) TABLESPACE pg_default;
 
-create index guild_members_user_id_idx on public.guild_members(user_id);
-create index channels_guild_id_idx on public.channels(guild_id);
-create index webhooks_guild_id_idx on public.webhooks(guild_id);
-create index webhooks_channel_id_idx on public.webhooks(channel_id);
-create index roles_guild_id_idx on public.roles(guild_id);
-create index oauth_sessions_user_id_idx on public.oauth_sessions(user_id);
-create index audit_logs_guild_created_idx on public.audit_logs(guild_id, created_at desc);
-create index notifications_user_unread_idx on public.notifications(user_id, read, created_at desc);
-create index embeds_creator_created_idx on public.embeds(creator_id, created_at desc);
-create index containers_creator_created_idx on public.containers(creator_id, created_at desc);
+CREATE TABLE IF NOT EXISTS public.guilds (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    discord_id bigint NOT NULL,
+    name text NOT NULL,
+    icon text NULL,
+    owner_discord_id bigint NULL,
+    has_bot boolean NULL DEFAULT false,
+    created_at timestamp without time zone NULL DEFAULT now(),
+    updated_at timestamp without time zone NULL DEFAULT now(),
+    CONSTRAINT guilds_pkey PRIMARY KEY (id),
+    CONSTRAINT guilds_discord_id_key UNIQUE (discord_id)
+) TABLESPACE pg_default;
 
-create trigger users_updated_at before update on public.users for each row execute function public.set_updated_at();
-create trigger oauth_sessions_updated_at before update on public.oauth_sessions for each row execute function public.set_updated_at();
-create trigger guilds_updated_at before update on public.guilds for each row execute function public.set_updated_at();
-create trigger roles_updated_at before update on public.roles for each row execute function public.set_updated_at();
-create trigger channels_updated_at before update on public.channels for each row execute function public.set_updated_at();
-create trigger webhooks_updated_at before update on public.webhooks for each row execute function public.set_updated_at();
-create trigger embeds_updated_at before update on public.embeds for each row execute function public.set_updated_at();
-create trigger containers_updated_at before update on public.containers for each row execute function public.set_updated_at();
-create trigger guild_settings_updated_at before update on public.guild_settings for each row execute function public.set_updated_at();
+CREATE TABLE IF NOT EXISTS public.roles (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    guild_id uuid NOT NULL,
+    discord_role_id bigint NOT NULL,
+    name text NOT NULL,
+    color integer NULL DEFAULT 0,
+    position integer NULL DEFAULT 0,
+    permissions bigint NULL DEFAULT 0,
+    created_at timestamp without time zone NULL DEFAULT now(),
+    updated_at timestamp without time zone NULL DEFAULT now(),
+    CONSTRAINT roles_pkey PRIMARY KEY (id),
+    CONSTRAINT roles_guild_id_discord_role_id_key UNIQUE (guild_id, discord_role_id),
+    CONSTRAINT roles_guild_id_fkey FOREIGN KEY (guild_id) REFERENCES public.guilds (id) ON DELETE CASCADE
+) TABLESPACE pg_default;
+
+-- 3. Dependent Tables (Level 1 Dependencies)
+CREATE TABLE IF NOT EXISTS public.audit_logs (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    guild_id uuid NULL,
+    user_id uuid NULL,
+    action text NOT NULL,
+    metadata jsonb NULL,
+    created_at timestamp without time zone NULL DEFAULT now(),
+    CONSTRAINT audit_logs_pkey PRIMARY KEY (id),
+    CONSTRAINT audit_logs_guild_id_fkey FOREIGN KEY (guild_id) REFERENCES public.guilds (id) ON DELETE CASCADE,
+    CONSTRAINT audit_logs_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users (id) ON DELETE SET NULL
+) TABLESPACE pg_default;
+
+CREATE TABLE IF NOT EXISTS public.channels (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    guild_id uuid NOT NULL,
+    discord_id bigint NOT NULL,
+    name text NOT NULL,
+    channel_type text NOT NULL,
+    position integer NULL,
+    category_id bigint NULL,
+    nsfw boolean NULL DEFAULT false,
+    created_at timestamp without time zone NULL DEFAULT now(),
+    updated_at timestamp without time zone NULL DEFAULT now(),
+    CONSTRAINT channels_pkey PRIMARY KEY (id),
+    CONSTRAINT channels_discord_id_key UNIQUE (discord_id),
+    CONSTRAINT channels_guild_id_fkey FOREIGN KEY (guild_id) REFERENCES public.guilds (id) ON DELETE CASCADE
+) TABLESPACE pg_default;
+
+CREATE TABLE IF NOT EXISTS public.containers (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    creator_id uuid NULL,
+    name text NOT NULL,
+    data jsonb NOT NULL,
+    created_at timestamp without time zone NULL DEFAULT now(),
+    updated_at timestamp without time zone NULL DEFAULT now(),
+    CONSTRAINT containers_pkey PRIMARY KEY (id),
+    CONSTRAINT containers_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES public.users (id) ON DELETE SET NULL
+) TABLESPACE pg_default;
+
+CREATE TABLE IF NOT EXISTS public.embeds (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    creator_id uuid NULL,
+    title text NULL,
+    description text NULL,
+    color text NULL,
+    footer text NULL,
+    image_url text NULL,
+    thumbnail_url text NULL,
+    author text NULL,
+    timestamp boolean NULL DEFAULT false,
+    created_at timestamp without time zone NULL DEFAULT now(),
+    updated_at timestamp without time zone NULL DEFAULT now(),
+    message_content text NULL,
+    verse_reference text NULL,
+    CONSTRAINT embeds_pkey PRIMARY KEY (id),
+    CONSTRAINT embeds_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES public.users (id) ON DELETE SET NULL
+) TABLESPACE pg_default;
+
+CREATE TABLE IF NOT EXISTS public.guild_members (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    guild_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    is_owner boolean NULL DEFAULT false,
+    is_admin boolean NULL DEFAULT false,
+    joined_at timestamp without time zone NULL DEFAULT now(),
+    CONSTRAINT guild_members_pkey PRIMARY KEY (id),
+    CONSTRAINT guild_members_guild_id_user_id_key UNIQUE (guild_id, user_id),
+    CONSTRAINT guild_members_guild_id_fkey FOREIGN KEY (guild_id) REFERENCES public.guilds (id) ON DELETE CASCADE,
+    CONSTRAINT guild_members_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users (id) ON DELETE CASCADE
+) TABLESPACE pg_default;
+
+CREATE TABLE IF NOT EXISTS public.guild_settings (
+    guild_id uuid NOT NULL,
+    timezone text NULL DEFAULT 'UTC'::text,
+    default_translation text NULL,
+    language text NULL DEFAULT 'en'::text,
+    created_at timestamp without time zone NULL DEFAULT now(),
+    updated_at timestamp without time zone NULL DEFAULT now(),
+    CONSTRAINT guild_settings_pkey PRIMARY KEY (guild_id),
+    CONSTRAINT guild_settings_guild_id_fkey FOREIGN KEY (guild_id) REFERENCES public.guilds (id) ON DELETE CASCADE
+) TABLESPACE pg_default;
+
+CREATE TABLE IF NOT EXISTS public.oauth_sessions (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    user_id uuid NOT NULL,
+    access_token text NOT NULL,
+    refresh_token text NOT NULL,
+    expires_at timestamp without time zone NULL,
+    created_at timestamp without time zone NULL DEFAULT now(),
+    updated_at timestamp without time zone NULL DEFAULT now(),
+    CONSTRAINT oauth_sessions_pkey PRIMARY KEY (id),
+    CONSTRAINT oauth_sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users (id) ON DELETE CASCADE
+) TABLESPACE pg_default;
+
+-- 4. Many-to-Many Relational Tables (Level 2 Dependencies)
+CREATE TABLE IF NOT EXISTS public.guild_containers (
+    guild_id uuid NOT NULL,
+    container_id uuid NOT NULL,
+    CONSTRAINT guild_containers_pkey PRIMARY KEY (guild_id, container_id),
+    CONSTRAINT guild_containers_container_id_fkey FOREIGN KEY (container_id) REFERENCES public.containers (id) ON DELETE CASCADE,
+    CONSTRAINT guild_containers_guild_id_fkey FOREIGN KEY (guild_id) REFERENCES public.guilds (id) ON DELETE CASCADE
+) TABLESPACE pg_default;
+
+CREATE TABLE IF NOT EXISTS public.member_roles (
+    guild_member_id uuid NOT NULL,
+    role_id uuid NOT NULL,
+    CONSTRAINT member_roles_pkey PRIMARY KEY (guild_member_id, role_id),
+    CONSTRAINT member_roles_guild_member_id_fkey FOREIGN KEY (guild_member_id) REFERENCES public.guild_members (id) ON DELETE CASCADE,
+    CONSTRAINT member_roles_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.roles (id) ON DELETE CASCADE
+) TABLESPACE pg_default;
+
+
+-- 5. Other
+CREATE TABLE IF NOT EXISTS public.bible_cache ( id uuid NOT NULL DEFAULT gen_random_uuid(), reference text NOT NULL, language text NULL DEFAULT 'en'::text, text text NOT NULL, translation text NULL, updated_at timestamp without time zone NULL DEFAULT now(), cache_key text NOT NULL, CONSTRAINT bible_cache_pkey PRIMARY KEY (id), CONSTRAINT bible_cache_cache_key_unique UNIQUE (cache_key) ) TABLESPACE pg_default; 
+
+CREATE TABLE IF NOT EXISTS public.webhooks (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    guild_id uuid NOT NULL,
+    channel_id uuid NULL,
+    discord_webhook_id bigint NULL,
+    token text NULL,
+    name text NULL,
+    enabled boolean NULL DEFAULT true,
+    created_at timestamp without time zone NULL DEFAULT now(),
+    updated_at timestamp without time zone NULL DEFAULT now(),
+    CONSTRAINT webhooks_pkey PRIMARY KEY (id),
+    CONSTRAINT webhooks_discord_webhook_id_key UNIQUE (discord_webhook_id),
+    CONSTRAINT webhooks_channel_id_fkey
+        FOREIGN KEY (channel_id)
+        REFERENCES public.channels (id)
+        ON DELETE CASCADE,
+    CONSTRAINT webhooks_guild_id_fkey
+        FOREIGN KEY (guild_id)
+        REFERENCES public.guilds (id)
+        ON DELETE CASCADE
+) TABLESPACE pg_default;
+
+-- 6. Role Management
+CREATE TABLE IF NOT EXISTS public.guild_role_permissions (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    guild_id uuid NOT NULL,
+    role_id uuid NOT NULL,
+    permission text NOT NULL,
+    created_by uuid NULL,
+    created_at timestamp without time zone DEFAULT now(),
+
+    CONSTRAINT guild_role_permissions_pkey PRIMARY KEY (id),
+
+    CONSTRAINT guild_role_permissions_unique
+        UNIQUE (guild_id, role_id, permission),
+
+    CONSTRAINT guild_role_permissions_guild_id_fkey
+        FOREIGN KEY (guild_id)
+        REFERENCES public.guilds (id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT guild_role_permissions_role_id_fkey
+        FOREIGN KEY (role_id)
+        REFERENCES public.roles (id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT guild_role_permissions_created_by_fkey
+        FOREIGN KEY (created_by)
+        REFERENCES public.users (id)
+        ON DELETE SET NULL
+);
+CREATE TABLE IF NOT EXISTS public.guild_permission_channels (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    guild_id uuid NOT NULL,
+    channel_id uuid NOT NULL,
+    permission text NOT NULL,
+    created_by uuid NULL,
+    created_at timestamp without time zone DEFAULT now(),
+
+    CONSTRAINT guild_permission_channels_pkey PRIMARY KEY (id),
+
+    CONSTRAINT guild_permission_channels_unique
+        UNIQUE (guild_id, channel_id, permission),
+
+    CONSTRAINT guild_permission_channels_guild_id_fkey
+        FOREIGN KEY (guild_id)
+        REFERENCES public.guilds (id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT guild_permission_channels_channel_id_fkey
+        FOREIGN KEY (channel_id)
+        REFERENCES public.channels (id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT guild_permission_channels_created_by_fkey
+        FOREIGN KEY (created_by)
+        REFERENCES public.users (id)
+        ON DELETE SET NULL
+);

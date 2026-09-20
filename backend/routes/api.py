@@ -4,7 +4,7 @@ from fastapi import APIRouter, File, Request, UploadFile, status
 from fastapi.responses import JSONResponse
 
 from backend.auth import build_guild_icon_url, get_session, fetch_discord_guilds, fetch_discord_user
-from backend.services import bible_service, discord_service, database_service
+from backend.services import authorization_service, bible_service, discord_service, database_service
 from backend.services.container_service import normalize_container_payload
 from backend.services.media_service import save_uploaded_media, validate_image_upload
 from backend.services.webhook_sender import send_webhook
@@ -18,6 +18,37 @@ MANAGE_WEBHOOKS = 0x02000000
 # Error response helper
 def _error(message: str, code: int = status.HTTP_400_BAD_REQUEST) -> JSONResponse:
     return JSONResponse(status_code=code, content={"success": False, "error": message})
+
+
+def _guild_admin_context(request: Request, guild_id: str) -> tuple[str | None, dict[str, Any] | None, JSONResponse | None]:
+    try:
+        session = _require_session(request)
+    except ValueError as exc:
+        return None, None, _error(str(exc), status.HTTP_401_UNAUTHORIZED)
+
+    user_id = database_service.get_user_id_by_discord_id(str(session["user"]["id"]))
+    if not user_id:
+        return None, None, _error("Authentication required.", status.HTTP_401_UNAUTHORIZED)
+
+    membership = database_service.get_guild_membership(user_id, guild_id)
+    if not membership or not (authorization_service.is_owner({"id": user_id}, guild_id) or authorization_service.is_admin({"id": user_id}, guild_id)):
+        return None, None, _error("Insufficient permissions for this guild.", status.HTTP_403_FORBIDDEN)
+
+    guild = database_service.get_guild_by_discord_id(guild_id) or {"id": guild_id, "discord_id": guild_id, "name": guild_id}
+    return user_id, guild, None
+
+
+def _strip_sensitive_permission_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in value.items():
+            if key in {"token", "url", "webhook"}:
+                continue
+            cleaned[key] = _strip_sensitive_permission_payload(item)
+        return cleaned
+    if isinstance(value, list):
+        return [_strip_sensitive_permission_payload(item) for item in value]
+    return value
 
 
 # Session and Guild Helpers
@@ -43,6 +74,38 @@ def _require_session(request: Request) -> dict[str, Any]:
 def _has_guild_permission(guild: dict[str, Any]) -> bool:
     # Guild must be admin or owner (already filtered during OAuth sync)
     return guild.get("is_admin", False) or guild.get("is_owner", False)
+
+
+def _has_current_guild_management_access(session: dict[str, Any], guild_id: str) -> bool:
+    user = session.get("user") or {}
+    user_id = database_service.get_user_id_by_discord_id(str(user.get("id") or ""))
+    if not user_id:
+        return False
+    membership = database_service.get_guild_membership(user_id, guild_id)
+    return bool(membership and (membership.get("is_owner") or membership.get("is_admin")))
+
+
+def _sync_user_roles(guild_id: str, guild_member: dict[str, Any], discord_user_id: str) -> None:
+    role_rows = [
+        {
+            "discord_role_id": str(role.get("id") or ""),
+            "name": str(role.get("name") or "Role"),
+            "color": int(role.get("color", 0) or 0),
+            "position": int(role.get("position", 0) or 0),
+            "permissions": int(role.get("permissions", 0) or 0),
+        }
+        for role in discord_service.list_guild_roles(guild_id)
+        if role.get("id")
+    ]
+    if role_rows:
+        database_service.upsert_roles(guild_id, role_rows)
+
+    member_role_ids = []
+    for role_id in discord_service.get_guild_member(guild_id, discord_user_id).get("roles", []):
+        role_row = database_service.get_role_by_discord_id(guild_id, str(role_id))
+        if role_row and role_row.get("id"):
+            member_role_ids.append(str(role_row["id"]))
+    database_service.replace_member_roles(guild_member["id"], member_role_ids)
 
 
 # Color Normalizer - converts hex string or integer to integer color value
@@ -99,6 +162,168 @@ def _embed_payload(embed: dict[str, Any]) -> dict[str, Any]:
             }
         ]
     return payload
+
+
+@api_router.get("/guilds/{guild_id}/permissions")
+async def get_permission_overview(guild_id: str, request: Request):
+    user_id, guild, error = _guild_admin_context(request, guild_id)
+    if error:
+        return error
+
+    try:
+        overview = database_service.get_permission_overview(guild_id)
+    except Exception as exc:
+        return _error(str(exc) or "Unable to load permissions.", status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    return {
+        "success": True,
+        "guild": {
+            "id": str(guild["discord_id"]),
+            "name": guild.get("name"),
+            "icon": guild.get("icon"),
+        },
+        "overview": _strip_sensitive_permission_payload(overview),
+    }
+
+
+@api_router.post("/guilds/{guild_id}/permissions/roles")
+async def grant_role_permission(guild_id: str, request: Request):
+    user_id, guild, error = _guild_admin_context(request, guild_id)
+    if error:
+        return error
+
+    try:
+        data = await request.json()
+    except Exception:
+        return _error("Invalid request payload.", status.HTTP_400_BAD_REQUEST)
+
+    role_id = str(data.get("role_id") or "")
+    permission = str(data.get("permission") or "SEND_EMBEDS")
+    if not role_id:
+        return _error("A role is required.", status.HTTP_400_BAD_REQUEST)
+    if permission != "SEND_EMBEDS":
+        return _error("Only SEND_EMBEDS is currently supported.", status.HTTP_400_BAD_REQUEST)
+
+    role = database_service.get_role_by_discord_id(guild_id, role_id)
+    guild_row = database_service.get_guild_by_discord_id(guild_id)
+    if role and guild_row and role.get("guild_id") and str(role["guild_id"]) != str(guild_row.get("id") or guild_id):
+        return _error("Selected role does not belong to this guild.", status.HTTP_400_BAD_REQUEST)
+    if not role:
+        return _error("Selected role does not belong to this guild.", status.HTTP_400_BAD_REQUEST)
+
+    if str(role.get("name") or "") == "@everyone" or bool(role.get("managed")):
+        return _error("That role cannot receive DailyBread permissions.", status.HTTP_400_BAD_REQUEST)
+
+    try:
+        database_service.grant_role_permission(guild_id, role_id, permission, user_id)
+    except database_service.DatabaseError as exc:
+        message = str(exc)
+        if "duplicate" in message.lower() or "unique" in message.lower():
+            return _error("That role already has this permission.", status.HTTP_409_CONFLICT)
+        return _error(message or "Unable to grant permission.", status.HTTP_400_BAD_REQUEST)
+    except Exception:
+        return _error("That role already has this permission.", status.HTTP_409_CONFLICT)
+
+    database_service.audit("role_permission.granted", guild["id"], user_id, {"guild": guild_id, "role": role_id, "permission": permission, "actor": str(user_id)})
+    return {"success": True, "message": f'Granted "Send Embeds" to the "{role.get("name") or "Role"}" role.'}
+
+
+@api_router.delete("/guilds/{guild_id}/permissions/roles/{role_id}")
+async def revoke_role_permission(guild_id: str, request: Request, role_id: str | None = None):
+    user_id, guild, error = _guild_admin_context(request, guild_id)
+    if error:
+        return error
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    role_id = str(role_id or data.get("role_id") or "")
+    if not role_id:
+        return _error("A role is required.", status.HTTP_400_BAD_REQUEST)
+
+    permission = "SEND_EMBEDS"
+    role = database_service.get_role_by_discord_id(guild_id, role_id)
+    guild_row = database_service.get_guild_by_discord_id(guild_id)
+    if role and guild_row and role.get("guild_id") and str(role["guild_id"]) != str(guild_row.get("id") or guild_id):
+        return _error("Selected role does not belong to this guild.", status.HTTP_400_BAD_REQUEST)
+    if not role:
+        return _error("Selected role does not belong to this guild.", status.HTTP_400_BAD_REQUEST)
+
+    database_service.revoke_role_permission(guild_id, role_id, permission)
+    database_service.audit("role_permission.revoked", guild["id"], user_id, {"guild": guild_id, "role": role_id, "permission": permission, "actor": str(user_id)})
+    return {"success": True, "message": f'Removed "Send Embeds" from the "{role.get("name") or "Role"}" role.'}
+
+
+@api_router.post("/guilds/{guild_id}/permissions/channels")
+async def allow_channel_permission(guild_id: str, request: Request):
+    user_id, guild, error = _guild_admin_context(request, guild_id)
+    if error:
+        return error
+
+    try:
+        data = await request.json()
+    except Exception:
+        return _error("Invalid request payload.", status.HTTP_400_BAD_REQUEST)
+
+    channel_id = str(data.get("channel_id") or "")
+    permission = str(data.get("permission") or "SEND_EMBEDS")
+    if not channel_id:
+        return _error("A channel is required.", status.HTTP_400_BAD_REQUEST)
+    if permission != "SEND_EMBEDS":
+        return _error("Only SEND_EMBEDS is currently supported.", status.HTTP_400_BAD_REQUEST)
+
+    channel = database_service.get_channel_for_guild(channel_id, guild_id)
+    guild_row = database_service.get_guild_by_discord_id(guild_id)
+    if channel and guild_row and channel.get("guild_id") and str(channel["guild_id"]) != str(guild_row.get("id") or guild_id):
+        return _error("Selected channel does not belong to this guild.", status.HTTP_400_BAD_REQUEST)
+    if not channel:
+        return _error("Selected channel does not belong to this guild.", status.HTTP_400_BAD_REQUEST)
+    if str(channel.get("channel_type") or "0") != "0":
+        return _error("Only text channels can use Send Embeds.", status.HTTP_400_BAD_REQUEST)
+    if not database_service.get_webhooks_for_channel(channel_id):
+        return _error("This channel needs a DailyBread webhook before Send Embeds can be enabled.", status.HTTP_400_BAD_REQUEST)
+
+    try:
+        database_service.allow_channel_permission(guild_id, channel_id, permission, user_id)
+    except database_service.DatabaseError as exc:
+        message = str(exc)
+        if "duplicate" in message.lower() or "unique" in message.lower():
+            return _error("That channel already has this permission.", status.HTTP_409_CONFLICT)
+        return _error(message or "Unable to allow permission.", status.HTTP_400_BAD_REQUEST)
+    except Exception:
+        return _error("That channel already has this permission.", status.HTTP_409_CONFLICT)
+
+    database_service.audit("channel_permission.allowed", guild["id"], user_id, {"guild": guild_id, "channel": channel_id, "permission": permission, "actor": str(user_id)})
+    return {"success": True, "message": f'Allowed "Send Embeds" in #{channel.get("name") or "channel"}.'}
+
+
+@api_router.delete("/guilds/{guild_id}/permissions/channels/{channel_id}")
+async def remove_channel_permission(guild_id: str, request: Request, channel_id: str | None = None):
+    user_id, guild, error = _guild_admin_context(request, guild_id)
+    if error:
+        return error
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    channel_id = str(channel_id or data.get("channel_id") or "")
+    if not channel_id:
+        return _error("A channel is required.", status.HTTP_400_BAD_REQUEST)
+
+    channel = database_service.get_channel_for_guild(channel_id, guild_id)
+    guild_row = database_service.get_guild_by_discord_id(guild_id)
+    if channel and guild_row and channel.get("guild_id") and str(channel["guild_id"]) != str(guild_row.get("id") or guild_id):
+        return _error("Selected channel does not belong to this guild.", status.HTTP_400_BAD_REQUEST)
+    if not channel:
+        return _error("Selected channel does not belong to this guild.", status.HTTP_400_BAD_REQUEST)
+
+    database_service.remove_channel_permission(guild_id, channel_id, "SEND_EMBEDS")
+    database_service.audit("channel_permission.removed", guild["id"], user_id, {"guild": guild_id, "channel": channel_id, "permission": "SEND_EMBEDS", "actor": str(user_id)})
+    return {"success": True, "message": f'Removed "Send Embeds" from #{channel.get("name") or "channel"}.'}
 
 
 # API Endpoints
@@ -161,26 +386,27 @@ async def get_guild_channels(guild_id: str, request: Request):
     except ValueError as exc:
         return _error(str(exc), status.HTTP_401_UNAUTHORIZED)
 
-    guild = _find_guild(session, guild_id)
-    if not guild:
-        return _error("Guild not found in your Discord session.", status.HTTP_403_FORBIDDEN)
-    if not _has_guild_permission(guild):
-        return _error("Insufficient permissions for this guild.", status.HTTP_403_FORBIDDEN)
+    user_id = database_service.get_user_id_by_discord_id(str(session["user"]["id"]))
+    guild = database_service.get_guild_by_discord_id(guild_id)
+    if not user_id or not guild or not database_service.get_guild_membership(user_id, guild_id):
+        return _error("You are not a member of this guild.", status.HTTP_403_FORBIDDEN)
 
     try:
         channels = discord_service.list_guild_channels(guild_id)
     except RuntimeError as exc:
         return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
 
-    text_channels = [
-        {
-            "id": str(channel["id"]),
-            "name": channel.get("name"),
-            "type": channel.get("type"),
-        }
-        for channel in channels
-        if channel.get("type") == 0
-    ]
+    membership = database_service.get_guild_membership(user_id, guild_id)
+    is_manager = bool(membership and (membership.get("is_owner") or membership.get("is_admin")))
+    text_channels = []
+    for channel in channels:
+        if channel.get("type") != 0:
+            continue
+        channel_row = database_service.get_channel_for_guild(str(channel["id"]), guild_id)
+        if not channel_row:
+            continue
+        if is_manager or authorization_service.can_send_embed({"id": user_id}, guild, channel_row):
+            text_channels.append({"id": str(channel["id"]), "name": channel.get("name"), "type": channel.get("type")})
 
     return {"success": True, "channels": text_channels}
 
@@ -193,9 +419,9 @@ async def get_guild_roles(guild_id: str, request: Request):
     except ValueError as exc:
         return _error(str(exc), status.HTTP_401_UNAUTHORIZED)
 
-    guild = _find_guild(session, guild_id)
-    if not guild or not _has_guild_permission(guild):
-        return _error("Insufficient permissions for this guild.", status.HTTP_403_FORBIDDEN)
+    guild, error = _mention_guild(request, guild_id)
+    if error:
+        return error
 
     try:
         roles = discord_service.list_guild_roles(guild_id)
@@ -213,11 +439,10 @@ def _mention_guild(request: Request, guild_id: str) -> tuple[dict[str, Any] | No
         session = _require_session(request)
     except ValueError as exc:
         return None, _error(str(exc), status.HTTP_401_UNAUTHORIZED)
-    guild = _find_guild(session, guild_id)
-    if not guild:
-        return None, _error("Guild not found in your Discord session.", status.HTTP_403_FORBIDDEN)
-    if not _has_guild_permission(guild):
-        return None, _error("Insufficient permissions for this guild.", status.HTTP_403_FORBIDDEN)
+    user_id = database_service.get_user_id_by_discord_id(str(session["user"]["id"]))
+    guild = database_service.get_guild_by_discord_id(guild_id)
+    if not user_id or not guild or not database_service.get_guild_membership(user_id, guild_id):
+        return None, _error("You are not a member of this guild.", status.HTTP_403_FORBIDDEN)
     return guild, None
 
 
@@ -256,11 +481,10 @@ async def create_channel_webhook(guild_id: str, channel_id: str, request: Reques
     except ValueError as exc:
         return _error(str(exc), status.HTTP_401_UNAUTHORIZED)
 
-    guild = _find_guild(session, guild_id)
-    if not guild:
-        return _error("Guild not found in your Discord session.", status.HTTP_403_FORBIDDEN)
-    if not _has_guild_permission(guild):
+    if not _has_current_guild_management_access(session, guild_id):
         return _error("Insufficient permissions for this guild.", status.HTTP_403_FORBIDDEN)
+    if not database_service.get_channel_for_guild(channel_id, guild_id):
+        return _error("Selected channel does not belong to this guild.", status.HTTP_400_BAD_REQUEST)
 
     existing = database_service.get_webhooks_for_channel(channel_id)
     if existing:
@@ -270,10 +494,7 @@ async def create_channel_webhook(guild_id: str, channel_id: str, request: Reques
         )
 
     try:
-        channel_name_row = database_service.get_channel_by_discord_id(channel_id)
-        channel_label = (channel_name_row.get("name") if channel_name_row else None) or "dailybread"
-        webhook_name = str(channel_label).strip().lstrip("#").replace(" ", "-").lower()
-        webhook = discord_service.create_webhook(channel_id, webhook_name or "dailybread")
+        webhook = discord_service.create_webhook(channel_id)
     except RuntimeError as exc:
         return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
 
@@ -395,9 +616,8 @@ async def get_guild_webhooks(guild_id: str, request: Request):
     except ValueError as exc:
         return _error(str(exc), status.HTTP_401_UNAUTHORIZED)
 
-    guild = _find_guild(session, guild_id)
-    if not guild:
-        return _error("Guild not found in your Discord session.", status.HTTP_403_FORBIDDEN)
+    if not _has_current_guild_management_access(session, guild_id):
+        return _error("Insufficient permissions for this guild.", status.HTTP_403_FORBIDDEN)
 
     try:
         webhooks = database_service.get_webhooks_for_guild(guild_id)
@@ -434,10 +654,7 @@ async def delete_webhook(webhook_id: str, request: Request):
     if not guild_id:
         return _error("Guild ID missing for webhook.", status.HTTP_400_BAD_REQUEST)
 
-    guild = _find_guild(session, guild_id)
-    if not guild:
-        return _error("Guild not found in your Discord session.", status.HTTP_403_FORBIDDEN)
-    if not _has_guild_permission(guild):
+    if not _has_current_guild_management_access(session, guild_id):
         return _error("Insufficient permissions for this guild.", status.HTTP_403_FORBIDDEN)
 
     try:
@@ -500,10 +717,16 @@ async def send_container(container_id: str, request: Request):
         if not container or not channel_id:
             return _error("A saved container and target channel are required.", status.HTTP_400_BAD_REQUEST)
         webhooks = database_service.get_webhooks_for_channel(channel_id)
-        if not webhooks or not any(database_service.user_has_guild_access(str(user_id), wh["guild_discord_id"]) for wh in webhooks):
-            return _error("No authorized webhook exists for this channel.", status.HTTP_403_FORBIDDEN)
-        results = [await send_webhook(webhook, container["data"]) for webhook in webhooks]
-        for webhook, result in zip(webhooks, results):
+        authorized_webhooks = []
+        for webhook in webhooks:
+            guild = database_service.get_guild_by_discord_id(str(webhook.get("guild_discord_id") or ""))
+            channel = database_service.get_channel_for_guild(channel_id, str(webhook.get("guild_discord_id") or ""))
+            if guild and channel and authorization_service.can_send_embed({"id": user_id}, guild, channel):
+                authorized_webhooks.append(webhook)
+        if not authorized_webhooks:
+            return _error("You do not have permission to send to this channel.", status.HTTP_403_FORBIDDEN)
+        results = [await send_webhook(webhook, container["data"]) for webhook in authorized_webhooks]
+        for webhook, result in zip(authorized_webhooks, results):
             database_service.audit("container.sent" if result["success"] else "container.send_failed", webhook["guild_id"], user_id, {"container_id": container_id, "webhook_id": webhook["discord_id"]})
         return {"success": all(result["success"] for result in results), "results": results}
     except Exception as exc:
@@ -543,10 +766,6 @@ async def sync_user_guilds(request: Request):
             permissions = int(guild.get("permissions", 0) or 0)
             is_admin = is_owner or ((permissions & 0x8) == 0x8)
 
-            # Only sync guilds where user is owner or admin
-            if not is_admin:
-                continue
-
             # Check if bot is in the guild
             has_bot = False
             try:
@@ -564,13 +783,14 @@ async def sync_user_guilds(request: Request):
             )
 
             # Upsert guild member relationship
-            database_service.upsert_guild_member(
+            guild_member = database_service.upsert_guild_member(
                 db_guild["id"], user_record["id"], is_owner, is_admin
             )
 
             # Sync channels if bot is present
             if has_bot:
                 try:
+                    _sync_user_roles(guild_id, guild_member, str(user_data["id"]))
                     channels = discord_service.list_guild_channels(guild_id)
                     database_service.upsert_channels(guild_id, [
                         {

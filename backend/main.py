@@ -1,13 +1,16 @@
+import asyncio
+from http.cookies import SimpleCookie
 import logging  # noqa: I001
 import os
 import secrets
 import traceback
+from pathlib import Path
 from typing import Any
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -24,11 +27,19 @@ from backend.auth import (
     get_login_redirect_url,
     get_oauth_redirect_uri,
     get_session,
+    is_request_secure,
     exchange_code_for_token,
     fetch_discord_guilds,
     fetch_discord_user,
 )
-from backend.config import DOCS_DIR, STATIC_DIR, TEMPLATES_DIR
+from backend.config import (
+    DEVELOPMENT_GUILD_ID,
+    DOCS_DIR,
+    STAFF_DOCUMENTS,
+    STAFF_DOCUMENT_ROLES,
+    STATIC_DIR,
+    TEMPLATES_DIR,
+)
 from backend.routes import router as routes_router
 from backend.services import discord_service, database_service, youversion_service
 from backend.services.media_service import get_media_storage_dir
@@ -54,6 +65,134 @@ def _load_docs_file(filename: str) -> str:
     if not file_path.exists():
         return "<p class=\"docs-placeholder\">This document could not be found.</p>"
     return file_path.read_text(encoding="utf-8")
+
+
+def _load_staff_document_asset(slug: str, page_number: int = 1) -> str | None:
+    document = next((doc for doc in STAFF_DOCUMENTS if doc["slug"] == slug), None)
+    if document is None:
+        return None
+
+    if page_number < 1:
+        page_number = 1
+    asset_base = str(document.get("asset_base") or document.get("title") or slug)
+    page_filename = f"{asset_base}.svg" if page_number == 1 else f"{asset_base} ({page_number}).svg"
+    asset_path = DOCS_DIR / str(document.get("directory") or "staff_guides") / page_filename
+    if asset_path.exists():
+        return str(asset_path)
+
+    legacy_candidates = [
+        DOCS_DIR / "staff_guides" / document.get("asset_name", ""),
+        DOCS_DIR / str(document.get("directory") or "staff_guides") / slug,
+        DOCS_DIR / str(document.get("directory") or "staff_guides") / f"{slug}.svg",
+        DOCS_DIR / str(document.get("directory") or "staff_guides") / f"{document['title']}.svg",
+    ]
+    for candidate in legacy_candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def _get_staff_document_by_slug(slug: str) -> dict | None:
+    return next((doc for doc in STAFF_DOCUMENTS if doc["slug"] == slug), None)
+
+
+def _ensure_development_guild_sync_for_user(user_record: dict[str, Any], access_token: str) -> None:
+    try:
+        guilds_data = fetch_discord_guilds(access_token)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Discord guild sync failed while checking staff access user_id=%s error=%s", user_record["id"], exc)
+        raise
+
+    guild_match = next((guild for guild in guilds_data if str(guild.get("id", "")) == DEVELOPMENT_GUILD_ID), None)
+    if guild_match is None:
+        return
+
+    guild_id = str(guild_match.get("id", ""))
+    is_owner = guild_match.get("owner") is True
+    permissions = int(guild_match.get("permissions", 0) or 0)
+    is_admin = is_owner or ((permissions & 0x8) == 0x8)
+
+    db_guild = database_service.upsert_guild(
+        guild_id,
+        guild_match.get("name", "Development"),
+        guild_match.get("icon"),
+        str(user_record["discord_id"]) if is_owner else None,
+        discord_service.is_bot_in_guild(guild_id),
+    )
+    guild_member = database_service.upsert_guild_member(db_guild["id"], user_record["id"], is_owner, is_admin)
+
+    _sync_user_roles(guild_id, guild_member, str(user_record["discord_id"]))
+
+
+def _sync_user_roles(guild_id: str, guild_member: dict[str, Any], discord_user_id: str) -> None:
+    guild_roles = discord_service.list_guild_roles(guild_id)
+    role_rows = [
+        {
+            "discord_role_id": str(role.get("id") or ""),
+            "name": str(role.get("name") or "Role"),
+            "color": int(role.get("color", 0) or 0),
+            "position": int(role.get("position", 0) or 0),
+            "permissions": int(role.get("permissions", 0) or 0),
+        }
+        for role in guild_roles
+        if role.get("id")
+    ]
+    if role_rows:
+        database_service.upsert_roles(guild_id, role_rows)
+
+    member_roles_payload = discord_service.get_guild_member(guild_id, discord_user_id)
+    member_role_ids = []
+    for role_id in member_roles_payload.get("roles", []):
+        role_row = database_service.get_role_by_discord_id(guild_id, str(role_id))
+        if role_row and role_row.get("id"):
+            member_role_ids.append(str(role_row["id"]))
+    database_service.replace_member_roles(guild_member["id"], member_role_ids)
+
+
+def _get_authorized_staff_documents_for_session(session: dict[str, Any]) -> list[dict]:
+    if not session or not session.get("user"):
+        return []
+
+    try:
+        user_record = database_service.get_user_by_discord_id(str(session["user"]["id"]))
+        if not user_record:
+            return []
+
+        oauth_session = database_service.get_latest_oauth_session(user_record["id"])
+        if not oauth_session or not oauth_session.get("access_token"):
+            return []
+
+        _ensure_development_guild_sync_for_user(user_record, oauth_session["access_token"])
+
+        guild = database_service.get_guild_by_discord_id(DEVELOPMENT_GUILD_ID)
+        if guild is None:
+            return []
+
+        member_row = database_service.get_guild_member_for_user(guild["id"], user_record["id"])
+        if member_row is None:
+            return []
+
+        authorized_role_ids = {
+            str(role["discord_role_id"]) if role.get("discord_role_id") is not None else str(role["id"])
+            for role in database_service.get_member_role_mapping_for_user(user_record["id"], DEVELOPMENT_GUILD_ID)
+        }
+
+        authorized_docs = []
+        for document in STAFF_DOCUMENTS:
+            if document["role_id"] in authorized_role_ids:
+                authorized_docs.append(document)
+        return authorized_docs
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Staff docs authorization failed for Discord user=%s error=%s", session.get("user", {}).get("id"), exc)
+        return []
+
+
+def is_user_authorized_for_staff_guide(session: dict[str, Any], slug: str) -> bool:
+    return any(document["slug"] == slug for document in _get_authorized_staff_documents_for_session(session))
+
+
+def get_staff_documents_for_session(session: dict[str, Any]) -> list[dict]:
+    return _get_authorized_staff_documents_for_session(session)
 
 
 def _is_api_request(request: Request) -> bool:
@@ -126,7 +265,7 @@ async def landing_page(
     
     if code and state:
         logger.info("OAuth parameters arrived on landing page; forwarding to callback handler")
-        return oauth_callback(request, code, state)
+        return await oauth_callback(request, code, state)
 
     daily_verse = youversion_service.get_today()
 
@@ -153,13 +292,40 @@ async def login_page(request: Request) -> HTMLResponse:
     )
 
 
+@app.get("/staff/verify")
+async def verify_staff_access(request: Request) -> RedirectResponse:
+    session = get_session(request)
+    if not session:
+        return RedirectResponse(url="/login")
+
+    user = session.get("user")
+    if not user:
+        return RedirectResponse(url="/login")
+
+    user_record = database_service.get_user_by_discord_id(str(user["id"]))
+    if not user_record:
+        return RedirectResponse(url="/login")
+
+    oauth_session = database_service.get_latest_oauth_session(user_record["id"])
+    if not oauth_session or not oauth_session.get("access_token"):
+        return RedirectResponse(url="/login/discord")
+
+    try:
+        _ensure_development_guild_sync_for_user(user_record, oauth_session["access_token"])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Staff access verification failed for user_id=%s error=%s", user_record["id"], exc)
+        return RedirectResponse(url="/login/discord")
+
+    return RedirectResponse(url="/docs")
+
+
 # pylint: disable=invalid-name
 @app.get("/login/discord")
 def login_discord(request: Request) -> RedirectResponse:
     state = secrets.token_urlsafe(16)
     redirect_url = get_login_redirect_url(state, request)
     response = RedirectResponse(url=redirect_url, status_code=307)
-    secure_cookie = request.url.scheme == "https"
+    secure_cookie = is_request_secure(request)
     response.set_cookie(
         STATE_COOKIE_NAME,
         state,
@@ -167,18 +333,28 @@ def login_discord(request: Request) -> RedirectResponse:
         httponly=True,
         secure=secure_cookie,
         samesite="lax",
+        path="/",
+    )
+    logger.info(
+        "OAuth state cookie attached path=/ secure=%s httponly=true samesite=lax host=%s",
+        secure_cookie,
+        request.headers.get("host"),
     )
     return response
 
 
 # pylint: disable=invalid-name
 @app.get("/callback/")
-def oauth_callback_no_slash(request: Request, code: str | None = None, state: str | None = None) -> RedirectResponse:
-    return oauth_callback(request, code, state)
+async def oauth_callback_no_slash(request: Request, code: str | None = None, state: str | None = None) -> RedirectResponse:
+    return await oauth_callback(request, code, state)
+
+
 @app.get("/callback")
-def oauth_callback_with_slash(request: Request, code: str | None = None, state: str | None = None) -> RedirectResponse:
-    return oauth_callback(request, code, state)
-def oauth_callback(request: Request, code: str | None = None, state: str | None = None) -> RedirectResponse:
+async def oauth_callback_with_slash(request: Request, code: str | None = None, state: str | None = None) -> RedirectResponse:
+    return await oauth_callback(request, code, state)
+
+
+async def oauth_callback(request: Request, code: str | None = None, state: str | None = None) -> RedirectResponse:
     if not code or not state:
         raise HTTPException(status_code=400, detail="Missing OAuth callback parameters.")
 
@@ -188,14 +364,14 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
 
     logger.info("OAuth callback entered")
     try:
-        token_data = exchange_code_for_token(code, get_oauth_redirect_uri(request))
+        token_data = await asyncio.to_thread(exchange_code_for_token, code, get_oauth_redirect_uri(request))
         logger.info("Discord token exchange succeeded")
         access_token = token_data["access_token"]
 
-        user_data = fetch_discord_user(access_token)
+        user_data = await asyncio.to_thread(fetch_discord_user, access_token)
         logger.info("Discord user fetched id=%s username=%s", user_data.get("id"), user_data.get("username"))
 
-        guilds_data = fetch_discord_guilds(access_token)
+        guilds_data = await asyncio.to_thread(fetch_discord_guilds, access_token)
         logger.info("Discord guilds fetched count=%s", len(guilds_data))
 
         logger.info("PostgreSQL OAuth sync started")
@@ -206,7 +382,8 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
             "avatar_url": build_avatar_url(user_data),
         }
 
-        user_record = database_service.upsert_user_by_discord_id(
+        user_record = await asyncio.to_thread(
+            database_service.upsert_user_by_discord_id,
             discord_id=str(user_data["id"]),
             username=user_data.get("username", ""),
             avatar=user.get("avatar"),
@@ -214,7 +391,7 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
         )
         # A website login is the only event that updates PostgreSQL. The bot
         # never performs background database synchronization.
-        database_service.store_oauth_session(user_record["id"], token_data)
+        await asyncio.to_thread(database_service.store_oauth_session, user_record["id"], token_data)
         synced_guilds = []
         for guild in guilds_data:
             guild_id = str(guild.get("id", ""))
@@ -222,34 +399,44 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
             permissions = int(guild.get("permissions", 0) or 0)
             is_admin = is_owner or ((permissions & 0x8) == 0x8)
 
-            # FILTER: Only sync guilds where user is owner or admin
-            if not is_admin:
-                continue
-
             has_bot = False
             try:
-                has_bot = discord_service.is_bot_in_guild(guild_id)
+                has_bot = await asyncio.to_thread(discord_service.is_bot_in_guild, guild_id)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Bot presence check failed guild_id=%s error=%s", guild_id, exc)
 
-            # Only the logged-in user's manageable guilds are written.
-            db_guild = database_service.upsert_guild(
+            db_guild = await asyncio.to_thread(
+                database_service.upsert_guild,
                 guild_id,
                 guild.get("name", ""),
                 guild.get("icon"),
                 str(user_data["id"]) if is_owner else None,
                 has_bot,
             )
-            database_service.upsert_guild_member(
-                db_guild["id"], user_record["id"], is_owner, is_admin
+            await asyncio.to_thread(
+                database_service.upsert_guild_member,
+                db_guild["id"],
+                user_record["id"],
+                is_owner,
+                is_admin,
             )
             if has_bot:
                 try:
-                    channels = discord_service.list_guild_channels(guild_id)
-                    database_service.upsert_channels(guild_id, [
-                        {"discord_id": str(channel["id"]), "name": channel.get("name"), "channel_type": channel.get("type", 0), "position": channel.get("position", 0), "category_id": channel.get("parent_id"), "nsfw": channel.get("nsfw", False)}
-                        for channel in channels
-                    ])
+                    member_record = await asyncio.to_thread(
+                        database_service.get_guild_member_for_user,
+                        db_guild["id"],
+                        user_record["id"],
+                    )
+                    await asyncio.to_thread(_sync_user_roles, guild_id, member_record, str(user_data["id"]))
+                    channels = await asyncio.to_thread(discord_service.list_guild_channels, guild_id)
+                    await asyncio.to_thread(
+                        database_service.upsert_channels,
+                        guild_id,
+                        [
+                            {"discord_id": str(channel["id"]), "name": channel.get("name"), "channel_type": channel.get("type", 0), "position": channel.get("position", 0), "category_id": channel.get("parent_id"), "nsfw": channel.get("nsfw", False)}
+                            for channel in channels
+                        ],
+                    )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Guild channel sync failed guild_id=%s error=%s", guild_id, exc)
             synced_guilds.append(
@@ -269,18 +456,48 @@ def oauth_callback(request: Request, code: str | None = None, state: str | None 
         logger.error("OAuth callback failed: %s\n%s", exc, traceback.format_exc())
         raise
 
+    secure_cookie = is_request_secure(request)
+    cookie_domain = None
+    logger.info(
+        "OAuth session cookie attached path=/ secure=%s httponly=true samesite=lax domain=%s host=%s",
+        secure_cookie,
+        cookie_domain,
+        request.headers.get("host"),
+    )
+    logger.info("OAuth session creation started user_id=%s", user.get("id"))
     session_value = create_session_cookie_value(user, synced_guilds)
     response = RedirectResponse(url="/dashboard")
-    secure_cookie = request.url.scheme == "https"
     response.set_cookie(
         SESSION_COOKIE_NAME,
         session_value,
         max_age=SESSION_MAX_AGE,
+        path="/",
+        domain=cookie_domain,
         httponly=True,
         secure=secure_cookie,
         samesite="lax",
     )
-    response.delete_cookie(STATE_COOKIE_NAME)
+    session_cookie = SimpleCookie()
+    for header_name, header_value in response.raw_headers:
+        if header_name.lower() == b"set-cookie" and header_value.startswith(f"{SESSION_COOKIE_NAME}=".encode()):
+            session_cookie.load(header_value.decode("latin-1"))
+            break
+    session_morsel = session_cookie.get(SESSION_COOKIE_NAME)
+    logger.info(
+        "OAuth response headers: location=%s session_cookie_present=%s session_cookie_path=%s "
+        "session_cookie_secure=%s session_cookie_httponly=%s session_cookie_samesite=%s "
+        "session_cookie_domain=%s",
+        response.headers.get("location"),
+        session_morsel is not None,
+        session_morsel["path"] if session_morsel else None,
+        bool(session_morsel["secure"]) if session_morsel else False,
+        bool(session_morsel["httponly"]) if session_morsel else False,
+        session_morsel["samesite"] if session_morsel else None,
+        session_morsel["domain"] or "<host-only>" if session_morsel else None,
+    )
+    logger.info("OAuth session cookie attached user_id=%s secure=%s path=/", user.get("id"), secure_cookie)
+    logger.info("Redirecting authenticated user to /dashboard user_id=%s", user.get("id"))
+    response.delete_cookie(STATE_COOKIE_NAME, path="/")
     return response
 
 
@@ -291,6 +508,7 @@ async def docs_home_page(request: Request) -> HTMLResponse:
     if not session:
         return RedirectResponse(url="/login")
 
+    staff_docs = get_staff_documents_for_session(session)
     return templates.TemplateResponse(
         request,
         "pages/docs.html",
@@ -298,8 +516,80 @@ async def docs_home_page(request: Request) -> HTMLResponse:
             "page_title": "Documentation - DailyBread",
             "active_page": "docs",
             "user": session["user"],
+            "staff_documents": staff_docs,
         }),
     )
+
+
+@app.get("/docs/staff/{slug}", response_class=HTMLResponse)
+async def docs_staff_guide_page(request: Request, slug: str) -> HTMLResponse:
+    session = get_session(request)
+    if not session:
+        return RedirectResponse(url="/login")
+
+    document = _get_staff_document_by_slug(slug)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Staff guide not found.")
+
+    if not is_user_authorized_for_staff_guide(session, slug):
+        raise HTTPException(status_code=403, detail="You are not authorized to view this staff guide.")
+
+    try:
+        page_number = int(request.query_params.get("page", "1") or "1")
+    except ValueError:
+        page_number = 1
+    if page_number < 1:
+        page_number = 1
+    max_pages = int(document.get("page_count") or 3)
+    if page_number > max_pages:
+        page_number = max_pages
+
+    asset_path = _load_staff_document_asset(slug, page_number)
+    if asset_path is None:
+        document_body = "<p class=\"docs-placeholder\">This staff guide has not been added yet.</p>"
+        asset_url = None
+    else:
+        asset_url = f"/docs/staff-assets/{slug}/{page_number}"
+        document_body = f'<img src="{asset_url}" alt="{document["title"]} page {page_number}" class="docs-svg-document" draggable="false" />'
+
+    return templates.TemplateResponse(
+        request,
+        "pages/docs-detail.html",
+        build_template_context(request, {
+            "page_title": f"{document['title']} - DailyBread",
+            "active_page": "docs",
+            "user": session["user"],
+            "document_title": document["title"],
+            "last_updated": None,
+            "document_body": document_body,
+            "guide_pages": list(range(1, max_pages + 1)),
+            "current_page": page_number,
+            "active_slug": slug,
+        }),
+    )
+
+
+@app.get("/docs/staff-assets/{slug}/{page}")
+async def docs_staff_asset(request: Request, slug: str, page: str) -> Any:
+    session = get_session(request)
+    if not session:
+        return RedirectResponse(url="/login")
+
+    if not is_user_authorized_for_staff_guide(session, slug):
+        raise HTTPException(status_code=403, detail="You are not authorized to access this staff guide asset.")
+
+    try:
+        page_number = int(page)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Staff guide page not found.") from None
+    if page_number < 1:
+        raise HTTPException(status_code=404, detail="Staff guide page not found.")
+
+    asset_path = _load_staff_document_asset(slug, page_number)
+    if asset_path is None:
+        raise HTTPException(status_code=404, detail="Staff guide asset not found.")
+
+    return FileResponse(asset_path, media_type="image/svg+xml")
 
 
 @app.get("/docs/help", response_class=HTMLResponse)
@@ -365,10 +655,17 @@ async def docs_privacy_page(request: Request) -> HTMLResponse:
 # Dashboard
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard_page(request: Request) -> HTMLResponse:
+    cookie_present = bool(request.cookies.get(SESSION_COOKIE_NAME))
+    logger.info("Dashboard session check cookie_present=%s", cookie_present)
     session = get_session(request)
     if not session:
+        if cookie_present:
+            logger.info("Dashboard session validation failed: malformed or invalid session")
+        else:
+            logger.info("Dashboard session validation failed: missing cookie")
         return RedirectResponse(url="/login")
 
+    logger.info("Dashboard session validation succeeded user_id=%s", session.get("user", {}).get("id"))
     guilds = _get_user_guilds_from_db(session)
     return templates.TemplateResponse(
         request,
@@ -399,6 +696,34 @@ async def guild_management_page(request: Request, guild_id: str) -> HTMLResponse
         "pages/guild.html",
         build_template_context(request, {
             "page_title": f"Manage {guild['name']} - DailyBread",
+            "active_page": "guild",
+            "user": session["user"],
+            "guild": guild,
+        }),
+    )
+
+
+@app.get("/dashboard/guild/{guild_id}/permissions", response_class=HTMLResponse)
+async def guild_permissions_page(request: Request, guild_id: str) -> HTMLResponse:
+    session = get_session(request)
+    if not session:
+        return RedirectResponse(url="/login")
+
+    guilds = _get_user_guilds_from_db(session)
+    guild = next((g for g in guilds if str(g.get("guild_id")) == str(guild_id)), None)
+    if not guild:
+        return RedirectResponse(url="/dashboard")
+
+    user_record = database_service.get_user_by_discord_id(str(session["user"]["id"]))
+    membership = database_service.get_guild_membership(user_record["id"], guild_id) if user_record else None
+    if not membership or not (membership.get("is_owner") or membership.get("is_admin")):
+        return RedirectResponse(url="/dashboard")
+
+    return templates.TemplateResponse(
+        request,
+        "pages/guild-permissions.html",
+        build_template_context(request, {
+            "page_title": f"Permissions - {guild['name']} - DailyBread",
             "active_page": "guild",
             "user": session["user"],
             "guild": guild,
@@ -478,8 +803,8 @@ async def advanced_builder_page(request: Request) -> RedirectResponse:
 @app.get("/logout")
 def logout(request: Request) -> RedirectResponse:
     response = RedirectResponse(url="/")
-    response.delete_cookie(SESSION_COOKIE_NAME)
-    response.delete_cookie(STATE_COOKIE_NAME)
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    response.delete_cookie(STATE_COOKIE_NAME, path="/")
     return response
 
 

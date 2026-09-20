@@ -127,10 +127,177 @@ def user_has_guild_access(user_uuid: str, guild_discord_id: str) -> bool:
     return bool(row and (row["is_owner"] or row["is_admin"]))
 
 
+def get_guild_membership(user_uuid: str, guild_discord_id: str) -> Optional[dict[str, Any]]:
+    return _fetch_one("""SELECT gm.*, g.discord_id AS guild_discord_id
+        FROM guild_members gm JOIN guilds g ON g.id = gm.guild_id
+        WHERE gm.user_id = %s AND g.discord_id = %s LIMIT 1""", (user_uuid, guild_discord_id))
+
+
 def get_user_guilds(user_uuid: str) -> list[dict[str, Any]]:
     rows = _fetch_all("""SELECT gm.is_owner, gm.is_admin, g.id, g.discord_id, g.name, g.icon, g.has_bot, g.owner_discord_id
         FROM guild_members gm JOIN guilds g ON g.id = gm.guild_id WHERE gm.user_id = %s""", (user_uuid,))
     return [{"id": str(row["discord_id"]), "guild_id": str(row["discord_id"]), "name": row["name"], "icon": row["icon"], "has_bot": row["has_bot"], "is_owner": row["is_owner"], "is_admin": row["is_admin"], "owner_id": str(row["owner_discord_id"]) if row["owner_discord_id"] else None} for row in rows]
+
+
+def get_guild_member_for_user(guild_uuid: str, user_uuid: str) -> Optional[dict[str, Any]]:
+    return _fetch_one("SELECT * FROM guild_members WHERE guild_id = %s AND user_id = %s LIMIT 1", (guild_uuid, user_uuid))
+
+
+def get_role_by_discord_id(guild_discord_id: str, discord_role_id: str) -> Optional[dict[str, Any]]:
+    return _fetch_one("""SELECT r.* FROM roles r JOIN guilds g ON g.id = r.guild_id
+        WHERE g.discord_id = %s AND r.discord_role_id = %s LIMIT 1""", (guild_discord_id, discord_role_id))
+
+
+def get_member_role_mapping_for_user(user_uuid: str, guild_discord_id: str) -> list[dict[str, Any]]:
+    return _fetch_all("""SELECT r.*
+        FROM member_roles mr
+        JOIN guild_members gm ON gm.id = mr.guild_member_id
+        JOIN guilds g ON g.id = gm.guild_id
+        JOIN roles r ON r.id = mr.role_id
+        WHERE gm.user_id = %s AND g.discord_id = %s""", (user_uuid, guild_discord_id))
+
+
+def user_has_role_permission(user_uuid: str, guild_discord_id: str, permission: str) -> bool:
+    row = _fetch_one("""SELECT 1
+        FROM guild_members gm
+        JOIN guilds g ON g.id = gm.guild_id
+        JOIN member_roles mr ON mr.guild_member_id = gm.id
+        JOIN roles r ON r.id = mr.role_id AND r.guild_id = g.id
+        JOIN guild_role_permissions grp ON grp.role_id = r.id AND grp.guild_id = g.id
+        WHERE gm.user_id = %s AND g.discord_id = %s AND grp.permission = %s
+        LIMIT 1""", (user_uuid, guild_discord_id, permission))
+    return row is not None
+
+
+def get_permission_overview(guild_discord_id: str) -> dict[str, Any]:
+    guild = get_guild_by_discord_id(guild_discord_id)
+    if not guild:
+        raise DatabaseError("Guild not found.")
+
+    roles = _fetch_all(
+        """SELECT r.id AS role_id, r.discord_role_id, r.name, r.color, r.position,
+            EXISTS (
+                SELECT 1 FROM guild_role_permissions grp
+                WHERE grp.guild_id = %s AND grp.role_id = r.id AND grp.permission = %s
+            ) AS has_permission
+        FROM roles r
+        WHERE r.guild_id = %s
+        ORDER BY r.position DESC, r.name ASC""",
+        (guild["id"], "SEND_EMBEDS", guild["id"]),
+    )
+
+    channels = _fetch_all(
+        """SELECT c.id AS channel_id, c.discord_id AS channel_discord_id, c.name, c.channel_type, c.position,
+            EXISTS (
+                SELECT 1 FROM guild_permission_channels gpc
+                WHERE gpc.guild_id = %s AND gpc.channel_id = c.id AND gpc.permission = %s
+            ) AS has_permission,
+            EXISTS (
+                SELECT 1 FROM webhooks w
+                WHERE w.guild_id = %s AND w.channel_id = c.id AND w.enabled = TRUE
+            ) AS has_webhook
+        FROM channels c
+        WHERE c.guild_id = %s
+        ORDER BY c.position ASC, c.name ASC""",
+        (guild["id"], "SEND_EMBEDS", guild["id"], guild["id"]),
+    )
+
+    return {
+        "guild_id": guild["discord_id"],
+        "guild_uuid": guild["id"],
+        "permission_options": [{"key": "SEND_EMBEDS", "label": "Send Embeds"}],
+        "roles": [
+            {
+                "id": str(role["discord_role_id"]),
+                "role_id": str(role["discord_role_id"]),
+                "db_role_id": str(role["role_id"]),
+                "name": role["name"],
+                "color": int(role.get("color") or 0),
+                "position": int(role.get("position") or 0),
+                "has_send_embeds": bool(role.get("has_permission")),
+            }
+            for role in roles
+        ],
+        "channels": [
+            {
+                "id": str(channel["channel_discord_id"]),
+                "channel_id": str(channel["channel_discord_id"]),
+                "db_channel_id": str(channel["channel_id"]),
+                "name": channel["name"],
+                "type": str(channel.get("channel_type") or "0"),
+                "has_webhook": bool(channel.get("has_webhook")),
+                "has_send_embeds": bool(channel.get("has_permission")),
+            }
+            for channel in channels
+            if str(channel.get("channel_type") or "0") == "0"
+        ],
+    }
+
+
+def grant_role_permission(guild_discord_id: str, role_id: str, permission: str, actor_id: str) -> dict[str, Any]:
+    guild = get_guild_by_discord_id(guild_discord_id)
+    role = get_role_by_discord_id(guild_discord_id, role_id)
+    if not guild or not role:
+        raise DatabaseError("Selected role does not belong to this guild.")
+    row = _fetch_one(
+        """INSERT INTO guild_role_permissions (guild_id, role_id, permission, created_by)
+        VALUES (%s, %s, %s, %s) RETURNING *""",
+        (guild["id"], role["id"], permission, actor_id),
+    )
+    if row is None:
+        raise DatabaseError("Role permission could not be saved.")
+    return row
+
+
+def revoke_role_permission(guild_discord_id: str, role_id: str, permission: str) -> bool:
+    guild = get_guild_by_discord_id(guild_discord_id)
+    role = get_role_by_discord_id(guild_discord_id, role_id)
+    if not guild or not role:
+        return False
+    row = _fetch_one(
+        """DELETE FROM guild_role_permissions
+        WHERE guild_id = %s AND role_id = %s AND permission = %s RETURNING id""",
+        (guild["id"], role["id"], permission),
+    )
+    return row is not None
+
+
+def allow_channel_permission(guild_discord_id: str, channel_id: str, permission: str, actor_id: str) -> dict[str, Any]:
+    guild = get_guild_by_discord_id(guild_discord_id)
+    channel = get_channel_for_guild(channel_id, guild_discord_id)
+    if not guild or not channel:
+        raise DatabaseError("Selected channel does not belong to this guild.")
+    row = _fetch_one(
+        """INSERT INTO guild_permission_channels (guild_id, channel_id, permission, created_by)
+        VALUES (%s, %s, %s, %s) RETURNING *""",
+        (guild["id"], channel["id"], permission, actor_id),
+    )
+    if row is None:
+        raise DatabaseError("Channel permission could not be saved.")
+    return row
+
+
+def remove_channel_permission(guild_discord_id: str, channel_id: str, permission: str) -> bool:
+    guild = get_guild_by_discord_id(guild_discord_id)
+    channel = get_channel_for_guild(channel_id, guild_discord_id)
+    if not guild or not channel:
+        return False
+    row = _fetch_one(
+        """DELETE FROM guild_permission_channels
+        WHERE guild_id = %s AND channel_id = %s AND permission = %s RETURNING id""",
+        (guild["id"], channel["id"], permission),
+    )
+    return row is not None
+
+
+def channel_has_permission(channel_discord_id: str, guild_discord_id: str, permission: str) -> bool:
+    row = _fetch_one("""SELECT 1
+        FROM guild_permission_channels gpc
+        JOIN channels c ON c.id = gpc.channel_id AND c.discord_id = %s
+        JOIN guilds g ON g.id = c.guild_id AND g.discord_id = %s
+        WHERE gpc.guild_id = g.id AND gpc.permission = %s
+        LIMIT 1""", (channel_discord_id, guild_discord_id, permission))
+    return row is not None
 
 
 def upsert_channels(guild_discord_id: str, channels: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -244,14 +411,14 @@ def get_container_for_user(container_id: str, user_uuid: str) -> Optional[dict[s
 
 
 def create_webhook_record(webhook: dict[str, Any]) -> dict[str, Any]:
-    row = _fetch_one("""SELECT g.id AS guild_id, c.id AS channel_id FROM guilds g JOIN channels c ON c.guild_id = g.id
+    row = _fetch_one("""SELECT g.id AS guild_id, c.id AS channel_id, c.name AS channel_name FROM guilds g JOIN channels c ON c.guild_id = g.id
         WHERE g.discord_id = %s AND c.discord_id = %s LIMIT 1""", (webhook["guild_id"], webhook["channel_id"]))
     if not row:
         raise DatabaseError("Webhook target is not synchronized by the bot.")
     result = _fetch_one("""INSERT INTO webhooks (guild_id, channel_id, discord_webhook_id, token, name, enabled)
         VALUES (%s, %s, %s, %s, %s, TRUE) ON CONFLICT (discord_webhook_id) DO UPDATE SET guild_id = EXCLUDED.guild_id,
         channel_id = EXCLUDED.channel_id, token = EXCLUDED.token, name = EXCLUDED.name, enabled = EXCLUDED.enabled RETURNING *""",
-        (row["guild_id"], row["channel_id"], webhook["id"], webhook["token"], webhook.get("name") or "DailyBread"))
+        (row["guild_id"], row["channel_id"], webhook["id"], webhook["token"], row["channel_name"] or "dailybread"))
     assert result is not None
     return result
 
@@ -309,8 +476,8 @@ def get_latest_daily_verse_cache() -> Optional[dict[str, Any]]:
     return _fetch_one("SELECT * FROM bible_cache WHERE cache_key LIKE 'daily_verse:%' ORDER BY cache_key DESC LIMIT 1", ())
 
 
-def store_bible_cache(cache_key: str, reference: str, text: str, translation: str | None = None) -> dict[str, Any]:
-    row = _fetch_one("""INSERT INTO bible_cache (cache_key, reference, text, translation) VALUES (%s, %s, %s, %s)
-        ON CONFLICT (cache_key) DO UPDATE SET reference = EXCLUDED.reference, text = EXCLUDED.text, translation = EXCLUDED.translation RETURNING *""", (cache_key, reference, text, translation))
+def store_bible_cache(cache_key: str, reference: str, text: str, translation: str | None = None, image_url: str | None = None) -> dict[str, Any]:
+    row = _fetch_one("""INSERT INTO bible_cache (cache_key, reference, text, translation, image_url) VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT (cache_key) DO UPDATE SET reference = EXCLUDED.reference, text = EXCLUDED.text, translation = EXCLUDED.translation, image_url = EXCLUDED.image_url RETURNING *""", (cache_key, reference, text, translation, image_url))
     assert row is not None
     return row

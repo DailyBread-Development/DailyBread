@@ -13,6 +13,14 @@
         <p class="docs-meta">Last Updated: {{ last_updated }}</p>
         {% endif %}
 
+        {% if guide_pages %}
+        <nav class="docs-page-nav" aria-label="Guide page navigation">
+          {% for page_no in guide_pages %}
+          <a href="/docs/staff/{{ active_slug }}?page={{ page_no }}" class="docs-page-number{% if page_no == current_page %} is-active{% endif %}">{{ page_no }}</a>
+          {% endfor %}
+        </nav>
+        {% endif %}
+
         <div class="mt-6">
           {{ document_body | safe }}
         </div>

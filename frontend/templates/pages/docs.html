@@ -33,6 +33,24 @@
         <div class="docs-card-footer">Read Privacy Policy</div>
       </a>
     </div>
+
+    {% if staff_documents %}
+    <div class="docs-section-header">
+      <p class="docs-kicker">Staff</p>
+      <h2 class="docs-section-title">Staff documentation</h2>
+    </div>
+    <div class="docs-directory-grid">
+      {% for doc in staff_documents %}
+      <a href="/docs/staff/{{ doc.slug }}" class="docs-card">
+        <div>
+          <h2 class="docs-card-title">{{ doc.title }}</h2>
+          <p class="docs-card-description">Staff-only documentation for the DailyBread Development server.</p>
+        </div>
+        <div class="docs-card-footer">Open {{ doc.title }}</div>
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
   </div>
 </div>
 {% endblock %}
